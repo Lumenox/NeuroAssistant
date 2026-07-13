@@ -1,0 +1,1950 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestionnaire Visites Neuro - v2 (schéma dynamique + chiffrement)</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; background-color: #f4f6f9; padding: 30px; margin: 0; color: #2c3e50; }
+  .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+  h2, h3, h4 { color: #2c3e50; margin-top: 0; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 14px; }
+  input, select, textarea { width: 100%; padding: 9px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; }
+  button { padding: 11px 16px; background-color: #3498db; color: white; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; margin-top: 12px; }
+  button:hover { background-color: #2980b9; }
+  button.secondary { background-color: #95a5a6; }
+  button.secondary:hover { background-color: #7f8c8d; }
+  button.success-btn { background-color: #2ecc71; }
+  button.success-btn:hover { background-color: #27ae60; }
+  button.warn-btn { background-color: #e67e22; }
+  button.warn-btn:hover { background-color: #d35400; }
+  button.danger-btn { background-color: #e74c3c; }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .hidden { display: none !important; }
+  .error { color: #e74c3c; background-color: #fde8e7; padding: 10px; border-radius: 6px; margin-top: 15px; white-space: pre-wrap; }
+  .success { color: #27ae60; background-color: #e8f8f0; padding: 10px; border-radius: 6px; margin-top: 15px; white-space: pre-wrap; }
+  .info-bar { background: #eaf2f8; border-left: 4px solid #3498db; padding: 10px 14px; border-radius: 6px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+  .actions-block { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+  .actions-block button { flex: 1; min-width: 180px; margin-top: 0; }
+  .form-group { background: #f8f9fa; padding: 18px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #3498db; }
+  .modal { background-color: #fff; border: 2px solid #2ecc71; padding: 20px; border-radius: 8px; margin-top: 20px; }
+  .tab-nav { display: flex; gap: 8px; margin-bottom: 15px; border-bottom: 2px solid #eee; }
+  .tab-nav button { background: none; color: #7f8c8d; border-radius: 6px 6px 0 0; padding: 10px 16px; margin-top: 0; }
+  .tab-nav button.active { background: #3498db; color: white; }
+  .test-section { border: 1px solid #e0e4e8; border-radius: 8px; margin-bottom: 12px; padding: 4px 14px 14px 14px; }
+  .test-section > summary { cursor: pointer; font-weight: 700; font-size: 16px; padding: 10px 0; color: #2c3e50; }
+  .level2-group { margin: 10px 0; padding-left: 6px; border-left: 3px solid #d6e9f8; }
+  .level2-group h4 { font-size: 14px; color: #2980b9; margin: 10px 0 6px; }
+  .field-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; flex-wrap: wrap; }
+  .field-row-label { min-width: 180px; font-size: 13.5px; color: #34495e; }
+  .field-row-inline { display: flex; gap: 10px; flex-wrap: wrap; }
+  .field-inline-item { display: flex; flex-direction: column; min-width: 90px; }
+  .field-inline-item span { font-size: 11px; color: #7f8c8d; margin-bottom: 2px; }
+  .field-inline-item input, .field-inline-item select { width: 90px; padding: 6px; }
+  .computed-field { background-color: #f4f0fb !important; font-weight: 700; color: #8e44ad; border-color: #d6c8ef !important; }
+  table.pending-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  table.pending-table th, table.pending-table td { border: 1px solid #e0e4e8; padding: 6px 8px; text-align: left; }
+  table.pending-table th { background: #f4f6f9; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #eaf2f8; color: #2980b9; margin-left: 6px; }
+  .badge.computed { background: #f4f0fb; color: #8e44ad; }
+  .ipp-result-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border: 1px solid #eee; border-radius: 6px; margin-top: 8px; }
+  .ipp-result-row button { margin-top: 0; padding: 6px 12px; }
+  small.hint { color: #7f8c8d; display: block; margin-top: 4px; }
+
+  #toast-container { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 9999; align-items: center; pointer-events: none; }
+  .toast { pointer-events: auto; cursor: pointer; padding: 12px 22px; border-radius: 8px; color: white; font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.2); opacity: 0; transform: translateY(12px); transition: opacity 0.25s ease, transform 0.25s ease; max-width: 520px; text-align: center; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast-success { background-color: #27ae60; }
+  .toast-error { background-color: #e74c3c; }
+
+  .filter-flyout { position: fixed; top: 90px; right: 0; z-index: 500; display: none; align-items: flex-start; }
+  .filter-flyout.active { display: flex; }
+  #filter-flyout-toggle { writing-mode: vertical-rl; text-orientation: mixed; background: #34495e; color: white; border: none; border-radius: 8px 0 0 8px; padding: 16px 9px; cursor: pointer; font-size: 13px; }
+  #filter-flyout-toggle:hover { background: #2c3e50; }
+  #filter-flyout-panel { background: white; border: 1px solid #dfe4ea; border-right: none; border-radius: 8px 0 0 8px; width: 260px; max-height: 78vh; overflow-y: auto; padding: 16px; box-shadow: -4px 0 14px rgba(0,0,0,0.1); }
+  #filter-flyout-panel.hidden { display: none; }
+  #filter-flyout-panel h4 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: #7f8c8d; margin: 14px 0 6px; }
+  #filter-flyout-panel h4:first-child { margin-top: 0; }
+  .filter-checkbox-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13.5px; cursor: pointer; }
+  .filter-checkbox-row input { width: auto; }
+
+  .variable-flyout-left { left: 0; right: auto; }
+  .variable-flyout-left #cr-variable-panel { border-radius: 0 8px 8px 0; border-left: none; border-right: 1px solid #dfe4ea; box-shadow: 4px 0 14px rgba(0,0,0,0.1); background: white; width: 260px; max-height: 78vh; overflow-y: auto; padding: 16px; }
+  .variable-flyout-left #cr-var-score-fields > div { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div id="filter-flyout" class="filter-flyout">
+  <button id="filter-flyout-toggle" onclick="toggleFilterFlyout()">◀ Filtres</button>
+  <div id="filter-flyout-panel" class="hidden">
+    <h4>Protocoles</h4>
+    <div id="protocole-list"></div>
+    <button class="secondary" style="width:100%; margin-top:8px;" onclick="resetScoreFilters()">🔄 Réinitialiser (tout afficher)</button>
+
+    <h4>Scores affichés</h4>
+    <div id="score-filter-list"></div>
+
+    <div id="admin-protocole-create" class="hidden">
+      <h4>Créer un protocole (admin)</h4>
+      <input type="text" id="new-protocole-name" placeholder="Nom du protocole" style="margin-bottom:8px;">
+      <div id="new-protocole-checkboxes"></div>
+      <button class="warn-btn" style="width:100%;" onclick="createProtocole()">➕ Créer le protocole</button>
+    </div>
+  </div>
+</div>
+
+<div id="cr-variable-flyout" class="filter-flyout variable-flyout-left">
+  <div id="cr-variable-panel">
+    <h4 style="margin-top:0;">Champs de visite</h4>
+    <div id="cr-var-visit-fields"></div>
+    <h4>Scores cliniques (cliquer pour insérer)</h4>
+    <div id="cr-var-score-fields"></div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ================= LOGIN ================= -->
+  <form id="view-login" onsubmit="event.preventDefault(); doLogin();">
+    <h2>Connexion Hospitalière</h2>
+    <label for="auth-login">Email ou ID Hospitalier</label>
+    <input type="text" id="auth-login" placeholder="Ex: med_123">
+    <label for="auth-pass">Mot de passe</label>
+    <input type="password" id="auth-pass" placeholder="••••••••">
+    <button type="submit">Se connecter</button>
+    <div id="auth-error" class="error hidden"></div>
+  </form>
+
+  <!-- ================= DASHBOARD ================= -->
+  <div id="view-dashboard" class="hidden">
+    <h2>Gestion de la Base de Données Locale</h2>
+    <p>Utilisateur : <strong id="user-display"></strong> (<span id="user-initials">--</span>)</p>
+
+    <!-- Etat : aucune DB chargée -->
+    <div id="pre-load-actions">
+      <div id="resume-db-zone" class="hidden" style="margin-bottom:12px;">
+        <button id="btn-resume-db" class="success-btn" onclick="resumeLastDatabase()" style="width:100%;"></button>
+      </div>
+      <div id="permission-request-zone" class="hidden form-group" style="border-left-color:#e67e22;">
+        <p id="permission-request-label" style="margin:0 0 8px; font-weight:600;"></p>
+        <button class="warn-btn" style="width:100%; margin-top:0;" onclick="confirmPendingPermission()">🔓 Autoriser l'accès en écriture</button>
+      </div>
+      <div class="actions-block">
+        <button onclick="triggerLoadDatabase()" class="success-btn">📂 Charger une Database (.db)</button>
+        <button id="btn-admin-toggle" onclick="showAdminPanel()" class="hidden warn-btn">⚙️ Créer une nouvelle DB</button>
+      </div>
+
+      <div id="admin-panel" class="hidden form-group">
+        <h3>Initialiser un nouveau fichier .db chiffré</h3>
+        <label for="db-name-input">Nom du fichier :</label>
+        <input type="text" id="db-name-input" value="base_visites_neuro.db">
+        <small class="hint">Une clé AES-256 sera générée automatiquement et stockée sur Supabase (aucune saisie manuelle de clé).</small>
+        <button onclick="createDatabaseAndSaveFile()" class="warn-btn">Créer et enregistrer le fichier .db</button>
+      </div>
+    </div>
+
+    <!-- Barre d'info + menu une fois la DB chargée -->
+    <div id="post-load-menu" class="hidden">
+      <div class="info-bar">
+        <span>🔓 Base ouverte : <strong id="current-db-label"></strong></span>
+        <button class="secondary" style="margin:0; padding:6px 12px;" onclick="closeCurrentDb()">Fermer / changer de base</button>
+      </div>
+      <div class="actions-block">
+        <button onclick="openPanel('panel-create-test')">🧪 Créer un test clinique</button>
+        <button onclick="openPanel('panel-search-ipp')">🔍 Chercher un IPP</button>
+        <button onclick="startNewVisit()" class="success-btn">➕ Créer une visite</button>
+        <button onclick="openCrScriptsPanel()">📝 Scripts de CR</button>
+      </div>
+    </div>
+
+    <!-- ======== PANEL: créer un test clinique ======== -->
+    <div id="panel-create-test" class="hidden form-group">
+      <h3>Créer un test clinique</h3>
+      <button class="secondary" onclick="closePanel('panel-create-test')">← Retour au menu</button>
+
+      <div class="tab-nav">
+        <button id="tab-btn-import" class="active" onclick="switchCreateTab('import')">Importer un CSV</button>
+        <button id="tab-btn-manual" onclick="switchCreateTab('manual')">Créer manuellement</button>
+      </div>
+
+      <!-- Import CSV -->
+      <div id="tab-import">
+        <label for="csv-file-input">Fichier CSV (colonnes level_1;level_2;level_3;level_4;level_5)</label>
+        <input type="file" id="csv-file-input" accept=".csv" onchange="handleCsvFileSelected(this.files[0])">
+        <div id="import-preview-zone"></div>
+      </div>
+
+      <!-- Création manuelle -->
+      <div id="tab-manual" class="hidden">
+        <label for="manual-level1">level_1 (nom du test)</label>
+        <input type="text" id="manual-level1" placeholder="Ex: MMSE">
+        <label for="manual-level2">level_2 (catégorie)</label>
+        <input type="text" id="manual-level2" placeholder="Ex: Orientation">
+        <label for="manual-level3">level_3 (item)</label>
+        <input type="text" id="manual-level3" placeholder="Ex: année">
+        <label for="manual-level4">level_4 (variante latérale, optionnel)</label>
+        <input type="text" id="manual-level4" placeholder="Ex: D, G, H, V">
+
+        <label for="manual-level5-type">level_5 (règle de saisie)</label>
+        <select id="manual-level5-type" onchange="updateManualTypeFields()">
+          <option value="numeric">Numérique (min - max)</option>
+          <option value="categorical">Catégoriel (liste de valeurs)</option>
+          <option value="text">Texte libre</option>
+          <option value="computed">Calculée automatiquement (somme du groupe)</option>
+        </select>
+
+        <div id="manual-numeric-fields">
+          <label for="manual-min">Valeur minimum</label>
+          <input type="number" id="manual-min" value="0">
+          <label for="manual-max">Valeur maximum</label>
+          <input type="number" id="manual-max" value="4">
+        </div>
+        <div id="manual-categorical-fields" class="hidden">
+          <label for="manual-options">Options (séparées par des virgules)</label>
+          <input type="text" id="manual-options" placeholder="Ex: oui, non, NR">
+        </div>
+
+        <p><small class="hint">Nom de colonne généré : <code id="manual-colname-preview">-</code></small></p>
+        <button onclick="addPendingManualDef()">➕ Ajouter cette colonne à la liste</button>
+        <div id="manual-pending-zone"></div>
+      </div>
+
+      <div id="test-status-error" class="error hidden"></div>
+      <div id="test-status-success" class="success hidden"></div>
+    </div>
+
+    <!-- ======== PANEL: chercher un IPP ======== -->
+    <div id="panel-search-ipp" class="hidden form-group">
+      <h3>Rechercher un patient (IPP)</h3>
+      <button class="secondary" onclick="closePanel('panel-search-ipp')">← Retour au menu</button>
+      <label for="search-ipp-input">demog_IPP (10 chiffres)</label>
+      <input type="text" id="search-ipp-input" maxlength="10" placeholder="Ex: 1234567890">
+      <button onclick="searchByIpp()">Rechercher</button>
+      <div id="ipp-search-results"></div>
+    </div>
+
+    <!-- ======== PANEL: nouvelle visite / modification ======== -->
+    <div id="panel-new-visit" class="hidden form-group">
+      <h3 id="visit-form-title">Nouvelle Fiche Visite</h3>
+      <button class="secondary" onclick="closePanel('panel-new-visit')">← Retour au menu</button>
+
+      <label for="input-ipp">demog_IPP (10 chiffres)</label>
+      <input type="text" id="input-ipp" maxlength="10" placeholder="Ex: 1234567890">
+      <label for="input-neuro">demog_neuro (initiales)</label>
+      <input type="text" id="input-neuro" readonly>
+      <label for="input-date">visite_date</label>
+      <input type="date" id="input-date">
+      <label for="input-heure">Heure</label>
+      <input type="time" id="input-heure">
+      <label for="input-type">visite_type</label>
+      <select id="input-type">
+        <option value="">-- choisir --</option>
+        <option value="consultation">consultation</option>
+        <option value="HDJ">HDJ</option>
+        <option value="HC">HC</option>
+        <option value="HDS">HDS</option>
+        <option value="USINV">USINV</option>
+        <option value="UNV">UNV</option>
+        <option value="avis">avis</option>
+        <option value="recherche">recherche</option>
+      </select>
+
+      <div id="dynamic-fields-container" style="margin-top:16px;"></div>
+
+      <div class="actions-block">
+        <button onclick="saveVisit()" class="success-btn">💾 Sauvegarder la visite</button>
+        <button onclick="openGenerateCrModal()" id="btn-generate-cr" class="secondary" disabled>📄 Générer un CR</button>
+      </div>
+
+      <div id="cr-generate-modal" class="hidden modal">
+        <h4>Générer un compte-rendu (brouillon)</h4>
+        <label for="cr-generate-select">Script à utiliser</label>
+        <select id="cr-generate-select" onchange="renderCrGenerationPreview()"></select>
+        <div id="cr-generate-missing-banner" class="error hidden" style="margin-top:10px;"></div>
+        <label for="cr-generate-output">Résultat — éditable avant copie</label>
+        <textarea id="cr-generate-output" rows="14" style="font-family:monospace; font-size:13px;"></textarea>
+        <div class="actions-block">
+          <button onclick="copyGeneratedCr()" class="success-btn">📋 Copier</button>
+          <button onclick="closeCrGenerateModal()" class="secondary">Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== PANEL: bibliothèque de scripts de CR ======== -->
+    <div id="panel-cr-scripts" class="hidden form-group">
+      <h3>Scripts de compte-rendu</h3>
+      <button class="secondary" onclick="closePanel('panel-cr-scripts')">← Retour au menu</button>
+
+      <div id="cr-templates-file-chooser" class="hidden">
+        <p><small class="hint">Aucun fichier de scripts chargé pour cette session.</small></p>
+        <div class="actions-block">
+          <button onclick="chooseCrTemplatesFile()" class="success-btn">📂 Charger cr_templates.json existant</button>
+          <button onclick="createCrTemplatesFile()" class="warn-btn">➕ Créer un nouveau fichier</button>
+        </div>
+      </div>
+
+      <div id="cr-templates-library" class="hidden">
+        <button onclick="openCrTemplateEditor(null)" class="success-btn">➕ Nouveau script</button>
+        <div id="cr-templates-list" style="margin-top:14px;"></div>
+      </div>
+
+      <div id="cr-template-editor" class="hidden">
+        <button class="secondary" onclick="closeCrTemplateEditor()">← Retour à la liste</button>
+        <input type="hidden" id="cr-editor-id">
+        <label for="cr-editor-name">Nom du script</label>
+        <input type="text" id="cr-editor-name" placeholder="Ex: CR consultation standard">
+        <label for="cr-editor-visite-type">Type de visite associé (optionnel)</label>
+        <select id="cr-editor-visite-type">
+          <option value="">-- aucun --</option>
+          <option value="consultation">consultation</option>
+          <option value="HDJ">HDJ</option>
+          <option value="HC">HC</option>
+          <option value="HDS">HDS</option>
+          <option value="USINV">USINV</option>
+          <option value="UNV">UNV</option>
+          <option value="avis">avis</option>
+          <option value="recherche">recherche</option>
+        </select>
+        <label for="cr-editor-body">Contenu du script (cliquez une variable à gauche pour l'insérer)</label>
+        <textarea id="cr-editor-body" rows="16" style="font-family:monospace; font-size:13px;" oninput="validateCrTemplateBody()"></textarea>
+        <div id="cr-editor-validation" class="error hidden" style="margin-top:8px;"></div>
+        <button onclick="saveCrTemplate()" id="cr-editor-save-btn" class="success-btn">💾 Sauvegarder le script</button>
+      </div>
+    </div>
+
+    <div id="db-status-error" class="error hidden"></div>
+    <div id="db-status-success" class="success hidden"></div>
+  </div>
+</div>
+
+<script>
+// ==================================================================================
+// CONFIG SUPABASE
+// Tables Supabase attendues :
+//   database_keys(key_name text PK, secret_pragma_key text)   -- contient la clé AES-256 en base64
+//   database_locks(key_name text PK UNIQUE, locked_by text, locked_at timestamptz)
+// ==================================================================================
+const SUPABASE_URL = 'https://yseaujinbdwxpcelsywr.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_7uC727-tO92zxGsAwCqBnA_E9oX_Xw8';
+const _supabase    = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let currentUser = null;
+let userInitials = "";
+let isDbAdmin = false;
+let dbInstance = null;
+let SQL_ENGINE = null;
+
+let loadedFileHandle = null;
+let currentDbName = "";
+let dbEncryptionKey = "";      // clé AES-256 base64 (issue de Supabase)
+let currentSchemaDefs = [];    // définitions de colonnes chargées depuis _schema_defs
+let editingVisiteId = null;    // non-null => mode "modifier une visite existante"
+let editingVisiteBaselineUpdatedAt = null; // valeur de visites.updated_at au moment de l'ouverture (filet de sécurité anti-écrasement)
+let pendingImportDefs = [];
+let pendingManualDefs = [];
+
+const VISITE_TYPES = ["consultation", "HDJ", "HC", "HDS", "USINV", "UNV", "avis", "recherche"];
+
+window.addEventListener('DOMContentLoaded', async () => {
+  SQL_ENGINE = await initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` });
+  try {
+    const savedHandle = await idbGet('lastDbHandle');
+    if (savedHandle) {
+      document.getElementById('btn-resume-db').textContent = `⏪ Reprendre "${savedHandle.name}"`;
+      document.getElementById('resume-db-zone').classList.remove('hidden');
+    }
+  } catch (e) { /* IndexedDB indisponible : tant pis, pas bloquant */ }
+});
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ==================================================================================
+// PERMISSION D'ÉCRITURE : à demander IMMÉDIATEMENT après l'obtention du handle
+// (juste après le picker), tant que le geste utilisateur est encore "actif".
+// Si on attend plus tard (après des appels réseau Supabase, du chiffrement, etc.),
+// le navigateur refuse silencieusement la demande ("Not allowed to request
+// permissions in this context"). Une fois accordée, la permission reste valable
+// pour le reste de la session, même après de nombreux `await`.
+// ==================================================================================
+// ==================================================================================
+// PERMISSION D'ÉCRITURE : voir proceedWithPermission() / confirmPendingPermission()
+// plus bas. On ne tente JAMAIS un requestPermission() "à la volée" enchaîné après un
+// await (picker, réseau...) : ça échoue silencieusement si le geste utilisateur initial
+// est déjà consommé. On vérifie sans risque avec queryPermission() (pas d'activation
+// requise), et si la permission manque, on affiche un bouton dédié dont le clic sera
+// un geste utilisateur tout neuf, isolé -- la meilleure chance de succès.
+// ==================================================================================
+
+// ==================================================================================
+// PERSISTANCE DU HANDLE DE FICHIER (IndexedDB) : évite de rouvrir l'explorateur de
+// fichiers à chaque rechargement de page. La permission devra tout de même être
+// reconfirmée par un clic (aucun navigateur n'autorise un accès disque 100% silencieux),
+// mais ça reste un seul clic au lieu de renaviguer dans les dossiers.
+// ==================================================================================
+const IDB_NAME = 'neuro_app_handles';
+const IDB_STORE = 'handles';
+function openHandleDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value) {
+  const db = await openHandleDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbGet(key) {
+  const db = await openHandleDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Toast temporaire en bas de fenêtre : apparaît, reste ~10s, puis disparaît.
+// Cliquer dessus le ferme immédiatement.
+function showToast(message, type, durationMs) {
+  durationMs = durationMs || 10000;
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  const remove = () => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  };
+  toast.addEventListener('click', remove);
+  setTimeout(remove, durationMs);
+}
+function showError(text) { showToast(text, 'error'); }
+function showSuccess(text) { showToast(text, 'success'); }
+
+// ==================================================================================
+// AUTHENTIFICATION
+// ==================================================================================
+async function doLogin() {
+  const input  = document.getElementById('auth-login').value.trim();
+  const pass   = document.getElementById('auth-pass').value;
+  const errEl  = document.getElementById('auth-error');
+  errEl.classList.add('hidden');
+
+  let email = input;
+  if (!input.includes('@')) {
+    const { data: foundEmail, error: lookupError } = await _supabase.rpc('get_email_from_hospital_id', { h_id: input });
+    if (lookupError || !foundEmail) {
+      errEl.textContent = 'Identifiant hospitalier inconnu.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    email = foundEmail;
+  }
+
+  const { data, error } = await _supabase.auth.signInWithPassword({ email, password: pass });
+  if (error) {
+    errEl.textContent = 'Mot de passe incorrect.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  await applySession(data.session);
+}
+
+async function applySession(session) {
+  if (!session) return;
+  currentUser = session.user;
+  document.getElementById('user-display').textContent = currentUser.email;
+
+  const { data: profile, error } = await _supabase.from('profiles').select('permissions').eq('id', currentUser.id).single();
+  if (!error && profile && profile.permissions) {
+    userInitials = profile.permissions.initiales || "ND";
+    document.getElementById('user-initials').textContent = userInitials;
+    if (profile.permissions.db_admin === true) {
+      isDbAdmin = true;
+      document.getElementById('btn-admin-toggle').classList.remove('hidden');
+    }
+  }
+  document.getElementById('view-login').classList.add('hidden');
+  document.getElementById('view-dashboard').classList.remove('hidden');
+}
+
+function showAdminPanel() { document.getElementById('admin-panel').classList.toggle('hidden'); }
+
+// ==================================================================================
+// CHIFFREMENT WebCrypto AES-256-GCM
+// Le fichier .db sur le disque = 12 octets d'IV + ciphertext. Ce n'est PAS un
+// fichier SQLite lisible tel quel : il faut le déchiffrer avant de le charger dans sql.js.
+// ==================================================================================
+function bufToBase64(buf) {
+  let binary = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+function base64ToBuf(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+async function generateAesKeyBase64() {
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  const raw = await crypto.subtle.exportKey("raw", key);
+  return bufToBase64(raw);
+}
+async function importAesKey(keyBase64, usage) {
+  const raw = base64ToBuf(keyBase64);
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, [usage]);
+}
+async function encryptDbBytes(plainBytes, keyBase64) {
+  const key = await importAesKey(keyBase64, "encrypt");
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plainBytes);
+  const output = new Uint8Array(12 + encrypted.byteLength);
+  output.set(iv, 0);
+  output.set(new Uint8Array(encrypted), 12);
+  return output;
+}
+async function decryptDbBytes(fileBytes, keyBase64) {
+  const key = await importAesKey(keyBase64, "decrypt");
+  const iv = fileBytes.slice(0, 12);
+  const ciphertext = fileBytes.slice(12);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return new Uint8Array(decrypted);
+}
+async function writeDbFile(db) {
+  const plainBytes = db.export();
+  const encrypted = await encryptDbBytes(plainBytes, dbEncryptionKey);
+  const writable = await loadedFileHandle.createWritable();
+  await writable.write(encrypted);
+  await writable.close();
+}
+async function readAndDecryptFreshDb() {
+  const file = await loadedFileHandle.getFile();
+  const arrayBuffer = await file.arrayBuffer();
+  const plain = await decryptDbBytes(new Uint8Array(arrayBuffer), dbEncryptionKey);
+  return new SQL_ENGINE.Database(plain);
+}
+
+// ==================================================================================
+// VERROUILLAGE (via Supabase database_locks) - 2-3 utilisateurs concurrents attendus
+// ==================================================================================
+const LOCK_STALE_MS = 20000;
+const LOCK_RETRY_MAX = 20;
+
+async function acquireLock(dbName) {
+  for (let attempt = 0; attempt < LOCK_RETRY_MAX; attempt++) {
+    const staleThreshold = new Date(Date.now() - LOCK_STALE_MS).toISOString();
+    await _supabase.from('database_locks').delete().eq('key_name', dbName).lt('locked_at', staleThreshold);
+
+    const { error } = await _supabase.from('database_locks').insert({
+      key_name: dbName, locked_by: userInitials, locked_at: new Date().toISOString()
+    });
+    if (!error) return true;
+    await sleep(150 + Math.random() * 250);
+  }
+  throw new Error("Impossible d'obtenir le verrou d'écriture (base occupée par un autre utilisateur). Réessayez dans quelques secondes.");
+}
+async function releaseLock(dbName) {
+  await _supabase.from('database_locks').delete().eq('key_name', dbName);
+}
+
+// ==================================================================================
+// VERROU D'ÉDITION DE VISITE : pris dès l'ouverture d'une fiche existante en
+// modification (pas seulement au moment d'écrire), pour empêcher un second
+// utilisateur d'éditer en parallèle sur la base d'un instantané périmé.
+// Distinct du verrou d'écriture ci-dessus (clé différente, durée de vie plus longue).
+// ==================================================================================
+const VISIT_LOCK_STALE_MS = 10 * 60 * 1000; // 10 minutes d'inactivité => verrou considéré abandonné
+
+function visitLockKey(visiteId) { return currentDbName + '::visite::' + visiteId; }
+
+async function acquireVisitLock(visiteId) {
+  const key = visitLockKey(visiteId);
+  const staleThreshold = new Date(Date.now() - VISIT_LOCK_STALE_MS).toISOString();
+  await _supabase.from('database_locks').delete().eq('key_name', key).lt('locked_at', staleThreshold);
+
+  const { data: existing } = await _supabase.from('database_locks').select('locked_by, locked_at').eq('key_name', key).maybeSingle();
+  if (existing && existing.locked_by !== userInitials) {
+    return { ok: false, lockedBy: existing.locked_by, lockedAt: existing.locked_at };
+  }
+
+  const { error } = await _supabase.from('database_locks')
+    .upsert({ key_name: key, locked_by: userInitials, locked_at: new Date().toISOString() }, { onConflict: 'key_name' });
+  if (error) return { ok: false, lockedBy: null, lockedAt: null, error: error.message };
+  return { ok: true };
+}
+
+async function releaseVisitLock(visiteId) {
+  await _supabase.from('database_locks').delete().eq('key_name', visitLockKey(visiteId)).eq('locked_by', userInitials);
+}
+
+// ==================================================================================
+// ACTION 1 : CRÉATION D'UNE NOUVELLE DB CHIFFRÉE (admin uniquement)
+// ==================================================================================
+let pendingPermissionHandle = null;
+let pendingPermissionAfterGrant = null; // callback à exécuter une fois la permission confirmée
+
+async function createDatabaseAndSaveFile() {
+  const dbName = document.getElementById('db-name-input').value.trim();
+
+  try {
+    const options = { suggestedName: dbName, types: [{ description: 'Base chiffrée', accept: { 'application/octet-stream': ['.db'] } }] };
+    const fileHandle = await window.showSaveFilePicker(options);
+    // showSaveFilePicker accorde en principe déjà readwrite nativement (contrairement à
+    // showOpenFilePicker), donc pas besoin du mécanisme de bouton dédié ici en théorie.
+    // On vérifie quand même l'état sans forcer de requestPermission bloquant.
+    await finalizeNewDatabase(fileHandle);
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    showError(err.message);
+  }
+}
+
+async function finalizeNewDatabase(fileHandle) {
+  const aesKey = await generateAesKeyBase64();
+
+  const { error: supabaseError } = await _supabase.from('database_keys').insert({ key_name: fileHandle.name, secret_pragma_key: aesKey });
+  if (supabaseError) throw new Error(`Erreur Supabase : ${supabaseError.message}`);
+
+  const db = new SQL_ENGINE.Database();
+  db.run(`
+    CREATE TABLE visites (
+      id TEXT PRIMARY KEY,
+      demog_IPP TEXT NOT NULL CHECK (length(demog_IPP) = 10 AND demog_IPP NOT GLOB '*[^0-9]*'),
+      demog_neuro TEXT NOT NULL,
+      visite_date TEXT NOT NULL,
+      visite_heure TEXT,
+      visite_type TEXT CHECK (visite_type IS NULL OR visite_type IN ('consultation','HDJ','HC','HDS','USINV','UNV','avis','recherche')),
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE _schema_defs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      test_name TEXT NOT NULL,
+      level_1 TEXT, level_2 TEXT, level_3 TEXT, level_4 TEXT,
+      level_5_raw TEXT,
+      col_type TEXT NOT NULL,
+      col_min REAL, col_max REAL, col_options TEXT,
+      column_name TEXT NOT NULL,
+      display_order INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE _protocoles (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      test_names TEXT NOT NULL,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const writable = await fileHandle.createWritable();
+  const encrypted = await encryptDbBytes(db.export(), aesKey);
+  await writable.write(encrypted);
+  await writable.close();
+
+  try { await idbSet('lastDbHandle', fileHandle); } catch (e) { /* pas bloquant */ }
+
+  showSuccess(`Fichier "${fileHandle.name}" créé et chiffré avec succès. Vous pouvez maintenant le charger.`);
+}
+
+// ==================================================================================
+// ACTION 2 : CHARGEMENT + DÉCHIFFREMENT D'UN FICHIER .DB EXISTANT
+// ==================================================================================
+// Stratégie en 2 temps pour la permission d'écriture :
+//   1) queryPermission() -- ne nécessite AUCUNE activation utilisateur, on l'appelle
+//      toujours en premier, sans risque.
+//   2) Si pas déjà accordée : on N'ESSAIE PAS de la demander à la volée (ça échoue
+//      silencieusement si le geste initial est déjà "dépensé", par ex. par le picker
+//      lui-même). On affiche à la place un bouton dédié, isolé, dont le clic sera un
+//      geste utilisateur tout neuf -- la meilleure chance de succès pour requestPermission().
+// ==================================================================================
+async function triggerLoadDatabase() {
+
+  try {
+    const [fileHandle] = await window.showOpenFilePicker({
+      id: "hopital-folder",
+      types: [{ description: 'Base chiffrée', accept: { 'application/octet-stream': ['.db'] } }]
+    });
+    await proceedWithPermission(fileHandle, async (handle) => {
+      try { await idbSet('lastDbHandle', handle); } catch (e) { /* pas bloquant */ }
+      await loadDatabaseFromHandle(handle);
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') return; // l'utilisateur a annulé le picker, rien à afficher
+    showError("Erreur : " + err.message);
+  }
+}
+
+// Bouton "Reprendre" : réutilise un handle mémorisé en IndexedDB, sans repasser par
+// l'explorateur de fichiers.
+async function resumeLastDatabase() {
+  try {
+    const fileHandle = await idbGet('lastDbHandle');
+    if (!fileHandle) { showError("Aucune base mémorisée."); return; }
+    await proceedWithPermission(fileHandle, (handle) => loadDatabaseFromHandle(handle));
+  } catch (err) {
+    showError("Erreur : " + err.message);
+  }
+}
+
+// Vérifie la permission sans jamais la solliciter "à la volée" hors d'un geste dédié.
+// Si déjà accordée -> exécute directement onGranted(handle).
+// Sinon -> affiche le bouton "Autoriser l'accès" et mémorise ce qu'il faudra faire au clic.
+async function proceedWithPermission(fileHandle, onGranted) {
+  const status = await fileHandle.queryPermission({ mode: 'readwrite' }); // pas d'activation requise
+  if (status === 'granted') {
+    await onGranted(fileHandle);
+    return;
+  }
+  pendingPermissionHandle = fileHandle;
+  pendingPermissionAfterGrant = onGranted;
+  document.getElementById('permission-request-label').textContent = `Autoriser l'accès en écriture à "${fileHandle.name}"`;
+  document.getElementById('permission-request-zone').classList.remove('hidden');
+}
+
+// Appelé par le bouton dédié "🔓 Autoriser l'accès en écriture" -- geste utilisateur
+// isolé et tout neuf, la meilleure chance de succès pour requestPermission().
+async function confirmPendingPermission() {
+  if (!pendingPermissionHandle) return;
+  const handle = pendingPermissionHandle;
+  const onGranted = pendingPermissionAfterGrant;
+  try {
+    const result = await handle.requestPermission({ mode: 'readwrite' });
+    if (result !== 'granted') { showError("Permission refusée par le navigateur."); return; }
+    document.getElementById('permission-request-zone').classList.add('hidden');
+    pendingPermissionHandle = null;
+    pendingPermissionAfterGrant = null;
+    await onGranted(handle);
+  } catch (err) {
+    showError("Erreur de permission : " + err.message +
+      " — si le problème persiste, il est possible que le navigateur restreigne cette API " +
+      "parce que la page est ouverte directement depuis le disque (file://). Essayez de la " +
+      "servir via http://localhost ou un petit serveur local.");
+  }
+}
+
+// Logique de chargement partagée entre triggerLoadDatabase et resumeLastDatabase.
+// À ce stade, la permission readwrite est déjà confirmée.
+async function loadDatabaseFromHandle(fileHandle) {
+  loadedFileHandle = fileHandle;
+  currentDbName = fileHandle.name;
+
+  const { data, error: supabaseError } = await _supabase.from('database_keys').select('secret_pragma_key').eq('key_name', currentDbName).single();
+  if (supabaseError || !data) throw new Error(`Clé introuvable sur Supabase pour "${currentDbName}".`);
+  dbEncryptionKey = data.secret_pragma_key;
+
+  const file = await fileHandle.getFile();
+  const arrayBuffer = await file.arrayBuffer();
+  let plainBytes;
+  try {
+    plainBytes = await decryptDbBytes(new Uint8Array(arrayBuffer), dbEncryptionKey);
+  } catch (decErr) {
+    throw new Error("Déchiffrement impossible : clé invalide ou fichier corrompu/altéré.");
+  }
+
+  dbInstance = new SQL_ENGINE.Database(plainBytes);
+  dbInstance.exec("SELECT count(*) FROM visites;"); // sanity check
+
+  currentSchemaDefs = loadSchemaDefs(dbInstance);
+  await ensureSchemaMigrations();
+  loadFilterState();
+  renderFilterFlyout();
+
+  document.getElementById('current-db-label').textContent = currentDbName;
+  document.getElementById('pre-load-actions').classList.add('hidden');
+  document.getElementById('post-load-menu').classList.remove('hidden');
+
+  showSuccess(`Le fichier "${currentDbName}" a été ouvert et déchiffré avec succès (${currentSchemaDefs.length} colonnes de test définies).`);
+}
+
+function closeCurrentDb() {
+  dbInstance = null; loadedFileHandle = null; currentDbName = ""; dbEncryptionKey = "";
+  currentSchemaDefs = []; editingVisiteId = null;
+  visibleTestNames = new Set(); activeProtocoleId = null;
+  document.getElementById('filter-flyout').classList.remove('active');
+  document.getElementById('pre-load-actions').classList.remove('hidden');
+  document.getElementById('post-load-menu').classList.add('hidden');
+  ['panel-create-test','panel-search-ipp','panel-new-visit','panel-cr-scripts'].forEach(id => document.getElementById(id).classList.add('hidden'));
+}
+
+function openPanel(id) {
+  ['panel-create-test','panel-search-ipp','panel-new-visit','panel-cr-scripts'].forEach(p => document.getElementById(p).classList.add('hidden'));
+  document.getElementById(id).classList.remove('hidden');
+}
+// Ferme un panneau. Si on quitte le formulaire de visite en cours d'édition,
+// on relâche le verrou d'édition pour libérer la fiche pour les autres utilisateurs.
+async function closePanel(id) {
+  document.getElementById(id).classList.add('hidden');
+  if (id === 'panel-new-visit' && editingVisiteId) {
+    await releaseVisitLock(editingVisiteId);
+    editingVisiteId = null;
+    editingVisiteBaselineUpdatedAt = null;
+  }
+}
+
+// ==================================================================================
+// OUTILS SCHÉMA : slugification, nom de colonne, règle level_5, forward-fill
+// ==================================================================================
+function slugify(str) {
+  if (!str) return "";
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-zA-Z0-9\-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+function buildColumnName(l1, l2, l3, l4) {
+  return [l1, l2, l3, l4].map(slugify).filter(Boolean).join("_");
+}
+function parseLevel5(raw) {
+  let v = (raw || "").replace(/"/g, "").trim();
+  if (/^somme$/i.test(v)) return { type: "computed" };
+  const rangeMatch = v.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+  if (rangeMatch) return { type: "numeric", min: parseInt(rangeMatch[1], 10), max: parseInt(rangeMatch[2], 10) };
+  if (/[,;|]/.test(v)) {
+    const options = v.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
+    return { type: "categorical", options };
+  }
+  return { type: "text" };
+}
+// Règle de forward-fill hiérarchique (équivalent aux cellules fusionnées Excel) :
+// une cellule vide hérite de la ligne précédente UNIQUEMENT si aucun niveau plus
+// englobant (à gauche) n'a reçu de nouvelle valeur explicite sur cette même ligne.
+function computeEffectiveLevels(prevEffective, rawRow) {
+  const eff = ["", "", "", ""];
+  let boundary = false;
+  for (let i = 0; i < 4; i++) {
+    const raw = (rawRow[i] || "").trim();
+    if (raw !== "") { eff[i] = raw; boundary = true; }
+    else if (!boundary) { eff[i] = prevEffective[i]; }
+    else { eff[i] = ""; }
+  }
+  return eff;
+}
+
+// ==================================================================================
+// ACCÈS SQL (helpers) - lecture via prepare/bind (sûr), écriture via run(sql, params)
+// ==================================================================================
+function dbSelect(db, sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+function loadSchemaDefs(db) {
+  const rows = dbSelect(db, `SELECT * FROM _schema_defs ORDER BY display_order ASC`);
+  rows.forEach(r => { try { r.col_options = r.col_options ? JSON.parse(r.col_options) : null; } catch (e) { r.col_options = null; } });
+  return rows;
+}
+function getNextDisplayOrder(db) {
+  const rows = dbSelect(db, `SELECT COALESCE(MAX(display_order),0) AS m FROM _schema_defs`);
+  return (rows[0]?.m || 0) + 1;
+}
+
+// ==================================================================================
+// FILTRES DE SCORES / PROTOCOLES
+// Panneau rétractable listant chaque test (level_1) avec une case à cocher, plus des
+// "protocoles" (préréglages admin) qui appliquent d'un coup un sous-ensemble de tests.
+// Un test décoché n'est simplement pas rendu dans le formulaire -> aucune ligne créée
+// dans sa table -> équivalent "NA" par absence, cohérent avec le reste de l'architecture.
+// État persisté dans localStorage, par nom de base (chaque DB peut avoir des tests différents).
+// ==================================================================================
+let visibleTestNames = new Set();
+let activeProtocoleId = null;
+let filterFlyoutOpen = false;
+
+function allTestNamesInSchema() { return [...new Set(currentSchemaDefs.map(d => d.test_name))]; }
+function filterStorageKey() { return 'scoreFilters::' + currentDbName; }
+
+function loadFilterState() {
+  const all = allTestNamesInSchema();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(filterStorageKey())); } catch (e) { saved = null; }
+
+  visibleTestNames = new Set();
+  activeProtocoleId = (saved && saved.activeProtocoleId) || null;
+  all.forEach(t => {
+    if (saved && Array.isArray(saved.knownTests) && saved.knownTests.includes(t)) {
+      if (saved.visibleTests.includes(t)) visibleTestNames.add(t);
+    } else {
+      visibleTestNames.add(t); // test jamais vu avant (nouveau) => visible par défaut
+    }
+  });
+}
+function saveFilterState() {
+  localStorage.setItem(filterStorageKey(), JSON.stringify({
+    knownTests: allTestNamesInSchema(),
+    visibleTests: [...visibleTestNames],
+    activeProtocoleId
+  }));
+}
+
+function toggleFilterFlyout() {
+  filterFlyoutOpen = !filterFlyoutOpen;
+  document.getElementById('filter-flyout-panel').classList.toggle('hidden', !filterFlyoutOpen);
+  document.getElementById('filter-flyout-toggle').textContent = filterFlyoutOpen ? '▶ Filtres' : '◀ Filtres';
+}
+
+function refreshVisitFormIfOpen() {
+  if (!document.getElementById('panel-new-visit').classList.contains('hidden')) renderVisitForm();
+}
+
+function renderFilterFlyout() {
+  document.getElementById('filter-flyout').classList.add('active');
+  renderScoreCheckboxList();
+  renderProtocoleList();
+  if (isDbAdmin) renderAdminProtocoleCreator();
+}
+
+function testLabels() {
+  const byTest = {};
+  currentSchemaDefs.forEach(d => { if (!byTest[d.test_name]) byTest[d.test_name] = d.level_1; });
+  return byTest;
+}
+
+function renderScoreCheckboxList() {
+  const zone = document.getElementById('score-filter-list');
+  const byTest = testLabels();
+  if (!Object.keys(byTest).length) { zone.innerHTML = '<p><small>Aucun test défini.</small></p>'; return; }
+  let html = '';
+  Object.entries(byTest).forEach(([testName, label]) => {
+    const checked = visibleTestNames.has(testName) ? 'checked' : '';
+    html += `<label class="filter-checkbox-row"><input type="checkbox" ${checked} onchange="toggleScoreVisibility('${testName}', this.checked)"> ${label}</label>`;
+  });
+  zone.innerHTML = html;
+}
+
+function toggleScoreVisibility(testName, checked) {
+  if (checked) visibleTestNames.add(testName); else visibleTestNames.delete(testName);
+  activeProtocoleId = null; // ajustement manuel => on quitte le préréglage de protocole
+  saveFilterState();
+  renderProtocoleList();
+  refreshVisitFormIfOpen();
+}
+
+function renderProtocoleList() {
+  const zone = document.getElementById('protocole-list');
+  const protocoles = loadProtocoles(dbInstance);
+  if (!protocoles.length) { zone.innerHTML = '<p><small>Aucun protocole défini' + (isDbAdmin ? ' — créez-en un ci-dessous.' : '.') + '</small></p>'; return; }
+  let html = '';
+  protocoles.forEach(p => {
+    const checked = activeProtocoleId === p.id ? 'checked' : '';
+    html += `<label class="filter-checkbox-row"><input type="checkbox" ${checked} onchange="applyProtocole('${p.id}', this.checked)"> ${p.name}</label>`;
+  });
+  zone.innerHTML = html;
+}
+
+function applyProtocole(protocoleId, checked) {
+  const protocoles = loadProtocoles(dbInstance);
+  const proto = protocoles.find(p => p.id === protocoleId);
+  if (!proto) return;
+  if (checked) {
+    visibleTestNames = new Set(proto.test_names);
+    activeProtocoleId = protocoleId;
+  } else {
+    activeProtocoleId = null;
+    visibleTestNames = new Set(allTestNamesInSchema());
+  }
+  saveFilterState();
+  renderScoreCheckboxList();
+  renderProtocoleList();
+  refreshVisitFormIfOpen();
+}
+
+function resetScoreFilters() {
+  visibleTestNames = new Set(allTestNamesInSchema());
+  activeProtocoleId = null;
+  saveFilterState();
+  renderScoreCheckboxList();
+  renderProtocoleList();
+  refreshVisitFormIfOpen();
+}
+
+function renderAdminProtocoleCreator() {
+  document.getElementById('admin-protocole-create').classList.remove('hidden');
+  const zone = document.getElementById('new-protocole-checkboxes');
+  const byTest = testLabels();
+  let html = '';
+  Object.entries(byTest).forEach(([testName, label]) => {
+    html += `<label class="filter-checkbox-row"><input type="checkbox" class="new-protocole-test-cb" value="${testName}"> ${label}</label>`;
+  });
+  zone.innerHTML = html || '<p><small>Aucun test disponible.</small></p>';
+}
+
+async function createProtocole() {
+  const name = document.getElementById('new-protocole-name').value.trim();
+  if (!name) { showError("Le nom du protocole est obligatoire."); return; }
+  const checked = [...document.querySelectorAll('.new-protocole-test-cb:checked')].map(el => el.value);
+  if (!checked.length) { showError("Sélectionnez au moins un test pour ce protocole."); return; }
+
+  await acquireLock(currentDbName);
+  try {
+    const freshDb = await readAndDecryptFreshDb();
+    ensureProtocolesTable(freshDb);
+    freshDb.run(`INSERT INTO _protocoles (id, name, test_names, created_by) VALUES (?,?,?,?)`,
+      [crypto.randomUUID(), name, JSON.stringify(checked), userInitials]);
+    await writeDbFile(freshDb);
+    dbInstance = freshDb;
+    showSuccess(`Protocole "${name}" créé.`);
+    document.getElementById('new-protocole-name').value = '';
+    document.querySelectorAll('.new-protocole-test-cb').forEach(cb => cb.checked = false);
+    renderProtocoleList();
+  } catch (err) {
+    showError("Erreur lors de la création du protocole : " + err.message);
+  } finally {
+    await releaseLock(currentDbName);
+  }
+}
+
+// ==================================================================================
+// SCRIPTS DE CR : bibliothèque partagée de modèles de compte-rendu, stockée dans un
+// fichier JSON EXTERNE (cr_templates.json), non chiffré, indépendant du cycle de vie
+// du .db -- les modèles ne contiennent aucune donnée patient, juste du texte + des
+// noms de colonnes. Même mécanisme de permission/persistance que le .db (proceedWithPermission,
+// idbGet/idbSet, acquireLock/releaseLock avec la clé 'cr_templates.json').
+// ==================================================================================
+let crTemplatesFileHandle = null;
+let crTemplatesCache = [];
+
+const VISIT_LEVEL_FIELDS = [
+  { name: 'demog_IPP', label: 'IPP patient' },
+  { name: 'visite_date', label: 'Date de visite' },
+  { name: 'visite_heure', label: 'Heure de visite' },
+  { name: 'visite_type', label: 'Type de visite' }
+];
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str === null || str === undefined ? '' : String(str);
+  return div.innerHTML;
+}
+
+async function readCrTemplatesFile() {
+  const file = await crTemplatesFileHandle.getFile();
+  const text = await file.text();
+  if (!text.trim()) return { templates: [] };
+  try {
+    const data = JSON.parse(text);
+    if (!Array.isArray(data.templates)) data.templates = [];
+    return data;
+  } catch (e) {
+    throw new Error("Le fichier cr_templates.json est invalide (JSON corrompu).");
+  }
+}
+async function writeCrTemplatesFile(data) {
+  const writable = await crTemplatesFileHandle.createWritable();
+  await writable.write(JSON.stringify(data, null, 2));
+  await writable.close();
+}
+
+// ---- Ouverture / création du fichier ----
+async function openCrScriptsPanel() {
+  openPanel('panel-cr-scripts');
+  document.getElementById('cr-template-editor').classList.add('hidden');
+  document.getElementById('cr-templates-library').classList.add('hidden');
+  document.getElementById('cr-templates-file-chooser').classList.add('hidden');
+
+  if (crTemplatesFileHandle) { await loadCrTemplatesIntoMemoryAndRender(); return; }
+
+  const saved = await idbGet('crTemplatesHandle');
+  if (saved) {
+    await proceedWithPermission(saved, async (handle) => {
+      crTemplatesFileHandle = handle;
+      await loadCrTemplatesIntoMemoryAndRender();
+    });
+    // Si la permission n'a pas pu être confirmée silencieusement, le bouton dédié
+    // "Autoriser l'accès" s'affiche déjà (via proceedWithPermission) -- rien d'autre à faire ici.
+    if (crTemplatesFileHandle) return;
+  }
+  document.getElementById('cr-templates-file-chooser').classList.remove('hidden');
+}
+
+async function chooseCrTemplatesFile() {
+  try {
+    const [fileHandle] = await window.showOpenFilePicker({
+      id: "hopital-folder",
+      types: [{ description: 'Scripts de CR (JSON)', accept: { 'application/json': ['.json'] } }]
+    });
+    await proceedWithPermission(fileHandle, async (handle) => {
+      crTemplatesFileHandle = handle;
+      try { await idbSet('crTemplatesHandle', handle); } catch (e) { /* pas bloquant */ }
+      await loadCrTemplatesIntoMemoryAndRender();
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    showError("Erreur : " + err.message);
+  }
+}
+async function createCrTemplatesFile() {
+  try {
+    const fileHandle = await window.showSaveFilePicker({
+      id: "hopital-folder",
+      suggestedName: 'cr_templates.json',
+      types: [{ description: 'Scripts de CR (JSON)', accept: { 'application/json': ['.json'] } }]
+    });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify({ templates: [] }, null, 2));
+    await writable.close();
+    crTemplatesFileHandle = fileHandle;
+    try { await idbSet('crTemplatesHandle', fileHandle); } catch (e) { /* pas bloquant */ }
+    await loadCrTemplatesIntoMemoryAndRender();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    showError("Erreur : " + err.message);
+  }
+}
+
+async function loadCrTemplatesIntoMemoryAndRender() {
+  try {
+    const data = await readCrTemplatesFile();
+    crTemplatesCache = data.templates;
+    document.getElementById('cr-templates-file-chooser').classList.add('hidden');
+    document.getElementById('cr-templates-library').classList.remove('hidden');
+    renderCrTemplatesLibrary();
+  } catch (err) {
+    showError("Erreur lors de la lecture de cr_templates.json : " + err.message);
+  }
+}
+
+// ---- Bibliothèque ----
+function sortedCrTemplates() {
+  return [...crTemplatesCache].sort((a, b) => {
+    if (a.owner === userInitials && b.owner !== userInitials) return -1;
+    if (b.owner === userInitials && a.owner !== userInitials) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+function renderCrTemplatesLibrary() {
+  const zone = document.getElementById('cr-templates-list');
+  const sorted = sortedCrTemplates();
+  if (!sorted.length) { zone.innerHTML = '<p><small>Aucun script pour le moment. Créez-en un.</small></p>'; return; }
+  let html = '';
+  sorted.forEach(t => {
+    const canEdit = isDbAdmin || t.owner === userInitials;
+    const typeBadge = t.visite_type_filter ? `<span class="badge">${escapeHtml(t.visite_type_filter)}</span>` : '';
+    html += `<div class="ipp-result-row" style="align-items:flex-start;">
+      <span>📝 <strong>${escapeHtml(t.name)}</strong> ${typeBadge}<br><small style="color:#7f8c8d;">par ${escapeHtml(t.owner)}</small></span>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="secondary" style="padding:6px 10px; margin:0;" onclick="openCrTemplateEditor('${t.id}')">${canEdit ? 'Modifier' : 'Lire'}</button>
+        <button class="secondary" style="padding:6px 10px; margin:0;" onclick="duplicateCrTemplate('${t.id}')">Dupliquer</button>
+        ${canEdit ? `<button class="danger-btn" style="padding:6px 10px; margin:0;" onclick="deleteCrTemplate('${t.id}')">Supprimer</button>` : ''}
+      </div>
+    </div>`;
+  });
+  zone.innerHTML = html;
+}
+
+// ---- Éditeur ----
+function openCrTemplateEditor(templateId) {
+  const t = templateId ? crTemplatesCache.find(x => x.id === templateId) : null;
+  const canEdit = !t || isDbAdmin || t.owner === userInitials;
+
+  document.getElementById('cr-templates-library').classList.add('hidden');
+  document.getElementById('cr-template-editor').classList.remove('hidden');
+  document.getElementById('cr-variable-flyout').classList.add('active');
+
+  document.getElementById('cr-editor-id').value = t ? t.id : '';
+  document.getElementById('cr-editor-name').value = t ? t.name : '';
+  document.getElementById('cr-editor-visite-type').value = t ? (t.visite_type_filter || '') : '';
+  document.getElementById('cr-editor-body').value = t ? t.body : '';
+  document.getElementById('cr-editor-body').readOnly = !canEdit;
+  document.getElementById('cr-editor-name').readOnly = !canEdit;
+  document.getElementById('cr-editor-visite-type').disabled = !canEdit;
+  document.getElementById('cr-editor-save-btn').classList.toggle('hidden', !canEdit);
+
+  renderCrVariablePanel();
+  validateCrTemplateBody();
+}
+function closeCrTemplateEditor() {
+  document.getElementById('cr-template-editor').classList.add('hidden');
+  document.getElementById('cr-variable-flyout').classList.remove('active');
+  document.getElementById('cr-templates-library').classList.remove('hidden');
+}
+
+function renderCrVariablePanel() {
+  const visitZone = document.getElementById('cr-var-visit-fields');
+  visitZone.innerHTML = VISIT_LEVEL_FIELDS.map(f =>
+    `<div class="filter-checkbox-row" onclick="insertVariableAtCursor('${f.name}')">➕ ${f.label}</div>`
+  ).join('');
+
+  const scoreZone = document.getElementById('cr-var-score-fields');
+  const byTest = {};
+  currentSchemaDefs.forEach(d => { (byTest[d.test_name] ||= []).push(d); });
+  let html = '';
+  Object.entries(byTest).forEach(([testName, defs]) => {
+    html += `<div><strong style="font-size:12.5px;">${escapeHtml(defs[0].level_1)}</strong>`;
+    defs.forEach(d => {
+      const label = [d.level_2, d.level_3, d.level_4].filter(Boolean).join(' / ') || d.level_1;
+      html += `<div class="filter-checkbox-row" style="padding-left:8px; font-size:12px;" onclick="insertVariableAtCursor('${d.column_name}')" title="{${d.column_name}}">➕ ${escapeHtml(label)}</div>`;
+    });
+    html += `</div>`;
+  });
+  scoreZone.innerHTML = html || '<p><small>Aucun test défini.</small></p>';
+}
+
+function insertVariableAtCursor(columnName) {
+  const textarea = document.getElementById('cr-editor-body');
+  if (textarea.readOnly) return;
+  const token = `{${columnName}}`;
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  textarea.value = textarea.value.slice(0, start) + token + textarea.value.slice(end);
+  const newPos = start + token.length;
+  textarea.focus();
+  textarea.setSelectionRange(newPos, newPos);
+  validateCrTemplateBody();
+}
+
+// ---- Validation des placeholders (en direct, à chaque frappe + avant sauvegarde) ----
+function knownPlaceholderNames() {
+  const names = new Set(VISIT_LEVEL_FIELDS.map(f => f.name));
+  currentSchemaDefs.forEach(d => names.add(d.column_name));
+  return names;
+}
+function extractPlaceholders(text) {
+  const matches = text.match(/\{([a-zA-Z0-9_\-]+)\}/g) || [];
+  return [...new Set(matches.map(m => m.slice(1, -1)))];
+}
+function validateCrTemplateBody() {
+  const text = document.getElementById('cr-editor-body').value;
+  const known = knownPlaceholderNames();
+  const unknown = extractPlaceholders(text).filter(p => !known.has(p));
+  const errEl = document.getElementById('cr-editor-validation');
+  if (unknown.length) {
+    errEl.textContent = `⚠️ Variable(s) inconnue(s) : ${unknown.map(u => '{' + u + '}').join(', ')} — utilisez le panneau de gauche pour insérer des variables valides.`;
+    errEl.classList.remove('hidden');
+    return false;
+  }
+  errEl.classList.add('hidden');
+  return true;
+}
+
+// ---- Sauvegarde / duplication / suppression (verrou dédié 'cr_templates.json') ----
+async function saveCrTemplate() {
+  if (!validateCrTemplateBody()) { showError("Corrigez les variables inconnues avant de sauvegarder."); return; }
+  const name = document.getElementById('cr-editor-name').value.trim();
+  if (!name) { showError("Le nom du script est obligatoire."); return; }
+  const body = document.getElementById('cr-editor-body').value;
+  const visiteTypeFilter = document.getElementById('cr-editor-visite-type').value || null;
+  const id = document.getElementById('cr-editor-id').value;
+
+  await acquireLock('cr_templates.json');
+  try {
+    const data = await readCrTemplatesFile();
+    const list = data.templates;
+    const now = new Date().toISOString();
+    if (id) {
+      const idx = list.findIndex(t => t.id === id);
+      if (idx === -1) throw new Error("Script introuvable (peut-être supprimé entre-temps).");
+      if (!(isDbAdmin || list[idx].owner === userInitials)) throw new Error("Vous n'êtes pas autorisé à modifier ce script.");
+      list[idx] = { ...list[idx], name, body, visite_type_filter: visiteTypeFilter, updated_at: now };
+    } else {
+      list.push({ id: crypto.randomUUID(), name, owner: userInitials, genre: 'cr', visite_type_filter: visiteTypeFilter, body, created_at: now, updated_at: now });
+    }
+    await writeCrTemplatesFile({ templates: list });
+    crTemplatesCache = list;
+    showSuccess(`Script "${name}" enregistré.`);
+    closeCrTemplateEditor();
+    renderCrTemplatesLibrary();
+  } catch (err) {
+    showError("Erreur lors de la sauvegarde du script : " + err.message);
+  } finally {
+    await releaseLock('cr_templates.json');
+  }
+}
+
+async function duplicateCrTemplate(templateId) {
+  await acquireLock('cr_templates.json');
+  try {
+    const data = await readCrTemplatesFile();
+    const list = data.templates;
+    const src = list.find(t => t.id === templateId);
+    if (!src) throw new Error("Script introuvable.");
+    const now = new Date().toISOString();
+    const copy = { ...src, id: crypto.randomUUID(), name: src.name + ' (copie)', owner: userInitials, created_at: now, updated_at: now };
+    list.push(copy);
+    await writeCrTemplatesFile({ templates: list });
+    crTemplatesCache = list;
+    showSuccess(`Copie "${copy.name}" créée.`);
+    renderCrTemplatesLibrary();
+  } catch (err) {
+    showError("Erreur lors de la duplication : " + err.message);
+  } finally {
+    await releaseLock('cr_templates.json');
+  }
+}
+
+async function deleteCrTemplate(templateId) {
+  const t = crTemplatesCache.find(x => x.id === templateId);
+  if (!t) return;
+  if (!(isDbAdmin || t.owner === userInitials)) { showError("Vous n'êtes pas autorisé à supprimer ce script."); return; }
+  if (!confirm(`Supprimer définitivement le script "${t.name}" ?`)) return;
+
+  await acquireLock('cr_templates.json');
+  try {
+    const data = await readCrTemplatesFile();
+    const list = data.templates.filter(x => x.id !== templateId);
+    await writeCrTemplatesFile({ templates: list });
+    crTemplatesCache = list;
+    showSuccess(`Script "${t.name}" supprimé.`);
+    renderCrTemplatesLibrary();
+  } catch (err) {
+    showError("Erreur lors de la suppression : " + err.message);
+  } finally {
+    await releaseLock('cr_templates.json');
+  }
+}
+
+// ---- Génération d'un CR pour la visite en cours d'édition ----
+async function openGenerateCrModal() {
+  if (!editingVisiteId) { showError("Enregistrez d'abord la visite avant de générer un CR."); return; }
+
+  if (!crTemplatesFileHandle) {
+    const saved = await idbGet('crTemplatesHandle');
+    if (saved) {
+      await proceedWithPermission(saved, async (handle) => { crTemplatesFileHandle = handle; });
+    }
+    if (!crTemplatesFileHandle) { showError('Chargez d\'abord un fichier de scripts via le menu "Scripts de CR".'); return; }
+  }
+
+  try {
+    const data = await readCrTemplatesFile();
+    crTemplatesCache = data.templates;
+  } catch (err) { showError("Erreur lors de la lecture des scripts : " + err.message); return; }
+
+  const select = document.getElementById('cr-generate-select');
+  const sorted = sortedCrTemplates();
+  if (!sorted.length) { showError("Aucun script disponible. Créez-en un dans \"Scripts de CR\"."); return; }
+  select.innerHTML = sorted.map(t => `<option value="${t.id}">${escapeHtml(t.name)} (${escapeHtml(t.owner)})</option>`).join('');
+
+  document.getElementById('cr-generate-modal').classList.remove('hidden');
+  renderCrGenerationPreview();
+}
+function closeCrGenerateModal() { document.getElementById('cr-generate-modal').classList.add('hidden'); }
+
+function collectCurrentVisiteData() {
+  const values = {};
+  const visRows = dbSelect(dbInstance, `SELECT * FROM visites WHERE id=?`, [editingVisiteId]);
+  if (!visRows.length) return values;
+  const v = visRows[0];
+  VISIT_LEVEL_FIELDS.forEach(f => { values[f.name] = v[f.name]; });
+
+  const byTable = {};
+  currentSchemaDefs.forEach(d => { (byTable[d.test_name] ||= []).push(d); });
+  Object.keys(byTable).forEach(tableName => {
+    const rows = dbSelect(dbInstance, `SELECT * FROM "${tableName}" WHERE visite_id=?`, [editingVisiteId]);
+    if (!rows.length) return;
+    const row = rows[0];
+    Object.keys(row).forEach(col => { values[col] = row[col]; });
+  });
+  return values;
+}
+
+function renderCrGenerationPreview() {
+  const templateId = document.getElementById('cr-generate-select').value;
+  const t = crTemplatesCache.find(x => x.id === templateId);
+  if (!t) return;
+  const values = collectCurrentVisiteData();
+  const known = knownPlaceholderNames();
+  const missing = [];
+  const unknownRefs = [];
+
+  const output = t.body.replace(/\{([a-zA-Z0-9_\-]+)\}/g, (match, name) => {
+    if (!known.has(name)) { unknownRefs.push(name); return `[colonne inconnue: ${name}]`; }
+    const val = values[name];
+    if (val === undefined || val === null || val === '') { missing.push(name); return 'NAN'; }
+    return String(val);
+  });
+
+  const banner = document.getElementById('cr-generate-missing-banner');
+  const msgs = [];
+  if (missing.length) msgs.push(`Valeurs manquantes (affichées "NAN") : ${missing.join(', ')}`);
+  if (unknownRefs.length) msgs.push(`⚠️ Ce script référence des colonnes qui n'existent plus dans la base : ${unknownRefs.join(', ')} — pensez à corriger le script.`);
+  if (msgs.length) { banner.innerHTML = msgs.join('<br>'); banner.classList.remove('hidden'); }
+  else { banner.classList.add('hidden'); }
+
+  document.getElementById('cr-generate-output').value = output;
+}
+
+async function copyGeneratedCr() {
+  const text = document.getElementById('cr-generate-output').value;
+  try {
+    await navigator.clipboard.writeText(text);
+    showSuccess("Texte copié dans le presse-papiers.");
+  } catch (err) {
+    showError("Copie automatique impossible : sélectionnez le texte manuellement (Ctrl+A puis Ctrl+C).");
+  }
+}
+
+function ensureTestTable(db, tableName) {
+  db.run(`CREATE TABLE IF NOT EXISTS "${tableName}" (
+    id TEXT PRIMARY KEY,
+    visite_id TEXT NOT NULL UNIQUE REFERENCES visites(id),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+function columnExists(db, tableName, columnName) {
+  const rows = dbSelect(db, `PRAGMA table_info("${tableName}")`);
+  return rows.some(r => r.name === columnName);
+}
+function buildCheckClause(colName, colType, min, max, options) {
+  if (colType === 'numeric') return ` CHECK("${colName}" IS NULL OR ("${colName}" >= ${min} AND "${colName}" <= ${max}))`;
+  if (colType === 'categorical') {
+    const list = options.map(o => `'${String(o).replace(/'/g, "''")}'`).join(',');
+    return ` CHECK("${colName}" IS NULL OR "${colName}" IN (${list}))`;
+  }
+  return '';
+}
+function addColumnToTable(db, tableName, colName, colType, min, max, options) {
+  if (columnExists(db, tableName, colName)) return;
+  const sqlType = (colType === 'numeric' || colType === 'computed') ? 'REAL' : 'TEXT';
+  const check = colType === 'computed' ? '' : buildCheckClause(colName, colType, min, max, options);
+  db.run(`ALTER TABLE "${tableName}" ADD COLUMN "${colName}" ${sqlType}${check};`);
+}
+function tableExists(db, tableName) {
+  const rows = dbSelect(db, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [tableName]);
+  return rows.length > 0;
+}
+function ensureProtocolesTable(db) {
+  db.run(`CREATE TABLE IF NOT EXISTS _protocoles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    test_names TEXT NOT NULL,
+    created_by TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );`);
+}
+function loadProtocoles(db) {
+  if (!db || !tableExists(db, '_protocoles')) return [];
+  const rows = dbSelect(db, `SELECT * FROM _protocoles ORDER BY created_at ASC`);
+  rows.forEach(r => { try { r.test_names = JSON.parse(r.test_names); } catch (e) { r.test_names = []; } });
+  return rows;
+}
+// Migration légère : ajoute visite_heure / visite_type / table _protocoles si absentes
+// (bases créées avant leur introduction).
+async function ensureSchemaMigrations() {
+  const missingHeure = !columnExists(dbInstance, 'visites', 'visite_heure');
+  const missingType = !columnExists(dbInstance, 'visites', 'visite_type');
+  const missingProtocoles = !tableExists(dbInstance, '_protocoles');
+  if (!missingHeure && !missingType && !missingProtocoles) return;
+
+  await acquireLock(currentDbName);
+  try {
+    const freshDb = await readAndDecryptFreshDb();
+    if (!columnExists(freshDb, 'visites', 'visite_heure')) {
+      freshDb.run(`ALTER TABLE visites ADD COLUMN visite_heure TEXT;`);
+    }
+    if (!columnExists(freshDb, 'visites', 'visite_type')) {
+      const list = VISITE_TYPES.map(t => `'${t}'`).join(',');
+      freshDb.run(`ALTER TABLE visites ADD COLUMN visite_type TEXT CHECK(visite_type IS NULL OR visite_type IN (${list}));`);
+    }
+    ensureProtocolesTable(freshDb);
+    await writeDbFile(freshDb);
+    dbInstance = freshDb;
+  } finally {
+    await releaseLock(currentDbName);
+  }
+}
+
+function insertSchemaDef(db, def) {
+  db.run(`INSERT INTO _schema_defs
+    (test_name, level_1, level_2, level_3, level_4, level_5_raw, col_type, col_min, col_max, col_options, column_name, display_order)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [def.test_name, def.level_1, def.level_2, def.level_3, def.level_4, def.level_5_raw,
+     def.col_type, def.col_min ?? null, def.col_max ?? null,
+     def.col_options ? JSON.stringify(def.col_options) : null,
+     def.column_name, def.display_order]);
+}
+
+// Applique une liste de définitions (import CSV ou création manuelle) à la DB en cours,
+// avec verrouillage + relecture fraîche + écriture, comme convenu.
+async function applyDefsToDb(defs) {
+  if (!defs.length) { showError("Aucune colonne à ajouter."); return; }
+  await acquireLock(currentDbName);
+  try {
+    const freshDb = await readAndDecryptFreshDb();
+    let order = getNextDisplayOrder(freshDb);
+    const tables = new Set();
+
+    for (const def of defs) {
+      ensureTestTable(freshDb, def.test_name);
+      tables.add(def.test_name);
+      addColumnToTable(freshDb, def.test_name, def.column_name, def.type, def.min, def.max, def.options);
+      insertSchemaDef(freshDb, {
+        test_name: def.test_name, level_1: def.level_1, level_2: def.level_2, level_3: def.level_3, level_4: def.level_4,
+        level_5_raw: def.level_5_raw, col_type: def.type, col_min: def.min, col_max: def.max, col_options: def.options,
+        column_name: def.column_name, display_order: order++
+      });
+    }
+
+    await writeDbFile(freshDb);
+    dbInstance = freshDb;
+    currentSchemaDefs = loadSchemaDefs(freshDb);
+    loadFilterState(); // les nouveaux tests apparaissent visibles par défaut
+    renderFilterFlyout();
+    showSuccess(`${defs.length} colonne(s) ajoutée(s) dans ${tables.size} table(s) de test : ${[...tables].join(', ')}.`);
+  } catch (err) {
+    showError("Erreur lors de l'ajout des colonnes : " + err.message);
+  } finally {
+    await releaseLock(currentDbName);
+  }
+}
+
+// ==================================================================================
+// 4a) CRÉATION DE TEST - onglets
+// ==================================================================================
+function switchCreateTab(tab) {
+  document.getElementById('tab-import').classList.toggle('hidden', tab !== 'import');
+  document.getElementById('tab-manual').classList.toggle('hidden', tab !== 'manual');
+  document.getElementById('tab-btn-import').classList.toggle('active', tab === 'import');
+  document.getElementById('tab-btn-manual').classList.toggle('active', tab === 'manual');
+}
+
+// ---- 4a1) IMPORT CSV ----
+async function handleCsvFileSelected(file) {
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(buf);
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // retire le BOM
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) { showError("CSV vide ou invalide."); return; }
+
+  let prevEff = ["", "", "", ""];
+  const parsedDefs = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(';');
+    const rawRow = [cells[0] || "", cells[1] || "", cells[2] || "", cells[3] || ""];
+    const level5raw = (cells[4] || "").trim();
+    const eff = computeEffectiveLevels(prevEff, rawRow);
+    prevEff = eff;
+    const colName = buildColumnName(eff[0], eff[1], eff[2], eff[3]);
+    if (!colName) continue;
+    const rule = parseLevel5(level5raw);
+    parsedDefs.push({
+      test_name: slugify(eff[0]), level_1: eff[0], level_2: eff[1], level_3: eff[2], level_4: eff[3],
+      level_5_raw: level5raw, column_name: colName, ...rule
+    });
+  }
+  pendingImportDefs = parsedDefs;
+  renderImportPreview();
+}
+
+function renderImportPreview() {
+  const zone = document.getElementById('import-preview-zone');
+  if (!pendingImportDefs.length) { zone.innerHTML = ''; return; }
+  let html = `<p><strong>${pendingImportDefs.length}</strong> colonnes détectées, réparties dans <strong>${new Set(pendingImportDefs.map(d=>d.test_name)).size}</strong> table(s) de test :</p>`;
+  html += `<table class="pending-table"><tr><th>Table</th><th>Colonne générée</th><th>Type</th><th>Règle</th></tr>`;
+  pendingImportDefs.forEach(d => {
+    const rule = d.type === 'numeric' ? `${d.min} – ${d.max}` : d.type === 'categorical' ? d.options.join(', ') : d.type === 'computed' ? 'somme du groupe' : 'libre';
+    html += `<tr><td>${d.test_name}</td><td><code>${d.column_name}</code></td><td>${d.type}</td><td>${rule}</td></tr>`;
+  });
+  html += `</table>`;
+  html += `<button onclick="confirmImport()" class="success-btn">✅ Confirmer l'import et ajouter à la DB</button>`;
+  zone.innerHTML = html;
+}
+async function confirmImport() {
+  await applyDefsToDb(pendingImportDefs);
+  pendingImportDefs = [];
+  document.getElementById('import-preview-zone').innerHTML = '';
+  document.getElementById('csv-file-input').value = '';
+}
+
+// ---- 4a2) CRÉATION MANUELLE ----
+function updateManualTypeFields() {
+  const t = document.getElementById('manual-level5-type').value;
+  document.getElementById('manual-numeric-fields').classList.toggle('hidden', t !== 'numeric');
+  document.getElementById('manual-categorical-fields').classList.toggle('hidden', t !== 'categorical');
+  updateManualColnamePreview();
+}
+['manual-level1','manual-level2','manual-level3','manual-level4'].forEach(id => {
+  document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateManualColnamePreview);
+  });
+});
+function updateManualColnamePreview() {
+  const l1 = document.getElementById('manual-level1').value;
+  const l2 = document.getElementById('manual-level2').value;
+  const l3 = document.getElementById('manual-level3').value;
+  const l4 = document.getElementById('manual-level4').value;
+  document.getElementById('manual-colname-preview').textContent = buildColumnName(l1, l2, l3, l4) || '-';
+}
+function addPendingManualDef() {
+  const l1 = document.getElementById('manual-level1').value.trim();
+  const l2 = document.getElementById('manual-level2').value.trim();
+  const l3 = document.getElementById('manual-level3').value.trim();
+  const l4 = document.getElementById('manual-level4').value.trim();
+  const type = document.getElementById('manual-level5-type').value;
+
+  if (!l1) { showError("level_1 (nom du test) est obligatoire."); return; }
+  const colName = buildColumnName(l1, l2, l3, l4);
+  if (!colName) { showError("Impossible de générer un nom de colonne (renseignez au moins level_1)."); return; }
+
+  const def = { test_name: slugify(l1), level_1: l1, level_2: l2, level_3: l3, level_4: l4, column_name: colName, type };
+  if (type === 'numeric') {
+    def.min = parseFloat(document.getElementById('manual-min').value);
+    def.max = parseFloat(document.getElementById('manual-max').value);
+    def.level_5_raw = `${def.min}-${def.max}`;
+  } else if (type === 'categorical') {
+    def.options = document.getElementById('manual-options').value.split(',').map(s => s.trim()).filter(Boolean);
+    def.level_5_raw = def.options.join(',');
+  } else if (type === 'computed') {
+    def.level_5_raw = 'somme';
+  } else {
+    def.level_5_raw = 'texte';
+  }
+
+  pendingManualDefs.push(def);
+  renderManualPending();
+  ['manual-level2','manual-level3','manual-level4'].forEach(id => document.getElementById(id).value = '');
+  updateManualColnamePreview();
+}
+function renderManualPending() {
+  const zone = document.getElementById('manual-pending-zone');
+  if (!pendingManualDefs.length) { zone.innerHTML = ''; return; }
+  let html = `<table class="pending-table"><tr><th>Table</th><th>Colonne</th><th>Type</th><th>Règle</th><th></th></tr>`;
+  pendingManualDefs.forEach((d, i) => {
+    const rule = d.type === 'numeric' ? `${d.min} – ${d.max}` : d.type === 'categorical' ? d.options.join(', ') : d.type === 'computed' ? 'somme du groupe' : 'libre';
+    html += `<tr><td>${d.test_name}</td><td><code>${d.column_name}</code></td><td>${d.type}</td><td>${rule}</td><td><button class="danger-btn" style="padding:4px 8px;margin:0;" onclick="removePendingManualDef(${i})">✕</button></td></tr>`;
+  });
+  html += `</table>`;
+  html += `<div class="actions-block">
+    <button onclick="confirmManualCreate()" class="success-btn">✅ Créer dans la DB</button>
+    <button onclick="exportSchemaAsCsv(pendingManualDefs)" class="secondary">⬇️ Sauvegarder un CSV</button>
+  </div>`;
+  zone.innerHTML = html;
+}
+function removePendingManualDef(i) { pendingManualDefs.splice(i, 1); renderManualPending(); }
+async function confirmManualCreate() {
+  await applyDefsToDb(pendingManualDefs);
+  pendingManualDefs = [];
+  renderManualPending();
+}
+function exportSchemaAsCsv(defs) {
+  if (!defs.length) { showError("Rien à exporter."); return; }
+  const header = "level_1;level_2;level_3;level_4;level_5";
+  const rows = defs.map(d => [d.level_1, d.level_2, d.level_3, d.level_4, d.level_5_raw].join(';'));
+  const csv = [header, ...rows].join('\r\n');
+  const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'definitions_tests.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ==================================================================================
+// 4b) RECHERCHE IPP
+// ==================================================================================
+function searchByIpp() {
+  const ipp = document.getElementById('search-ipp-input').value.trim();
+  const zone = document.getElementById('ipp-search-results');
+  if (ipp.length !== 10 || isNaN(ipp)) { zone.innerHTML = '<p class="error">IPP invalide (10 chiffres attendus).</p>'; return; }
+
+  const rows = dbSelect(dbInstance, `SELECT id, visite_date, visite_heure, visite_type, demog_neuro FROM visites WHERE demog_IPP = ? ORDER BY visite_date DESC, visite_heure DESC`, [ipp]);
+  if (!rows.length) { zone.innerHTML = '<p>Aucune visite trouvée pour cet IPP.</p>'; return; }
+
+  let html = `<p>${rows.length} visite(s) trouvée(s) :</p>`;
+  rows.forEach(r => {
+    const heure = r.visite_heure ? ` à ${r.visite_heure}` : '';
+    const type = r.visite_type ? ` <span class="badge">${r.visite_type}</span>` : '';
+    html += `<div class="ipp-result-row">
+      <span>📅 ${r.visite_date}${heure}${type} — saisie par ${r.demog_neuro}</span>
+      <button onclick="loadVisitForEdit('${r.id}')">Modifier</button>
+    </div>`;
+  });
+  zone.innerHTML = html;
+}
+
+async function loadVisitForEdit(visiteId) {
+  const rows = dbSelect(dbInstance, `SELECT * FROM visites WHERE id = ?`, [visiteId]);
+  if (!rows.length) { showError("Visite introuvable."); return; }
+  const v = rows[0];
+
+  // Verrou d'édition : si un autre utilisateur a déjà cette fiche ouverte, on refuse.
+  const lockResult = await acquireVisitLock(visiteId);
+  if (!lockResult.ok) {
+    if (lockResult.lockedBy) {
+      showError(`Cette visite est déjà en cours de modification par ${lockResult.lockedBy} (depuis ${new Date(lockResult.lockedAt).toLocaleTimeString()}). Réessayez plus tard.`);
+    } else {
+      showError("Impossible d'obtenir le verrou d'édition : " + (lockResult.error || "erreur inconnue"));
+    }
+    return;
+  }
+
+  editingVisiteId = visiteId;
+  editingVisiteBaselineUpdatedAt = v.updated_at;
+
+  openPanel('panel-new-visit');
+  renderVisitForm();
+  document.getElementById('visit-form-title').textContent = `Modifier la visite du ${v.visite_date}`;
+  document.getElementById('input-ipp').value = v.demog_IPP;
+  document.getElementById('input-date').value = v.visite_date;
+  document.getElementById('input-heure').value = v.visite_heure || '';
+  document.getElementById('input-type').value = v.visite_type || '';
+
+  // pré-remplissage des champs dynamiques depuis chaque table de test
+  const byTable = {};
+  currentSchemaDefs.forEach(d => { (byTable[d.test_name] ||= []).push(d); });
+  for (const tableName of Object.keys(byTable)) {
+    const testRows = dbSelect(dbInstance, `SELECT * FROM "${tableName}" WHERE visite_id = ?`, [visiteId]);
+    if (!testRows.length) continue;
+    const row = testRows[0];
+    Object.keys(row).forEach(col => {
+      const el = document.getElementById('field_' + col);
+      if (el && row[col] !== null && row[col] !== undefined) el.value = row[col];
+    });
+  }
+  wireComputedFields(currentSchemaDefs);
+}
+
+// ==================================================================================
+// 4c/4d) FORMULAIRE DE VISITE - rendu dynamique du schéma + sauvegarde verrouillée
+// ==================================================================================
+// Démarre une NOUVELLE visite (bouton menu principal) : réinitialise tout l'état d'édition.
+function startNewVisit() {
+  editingVisiteId = null;
+  editingVisiteBaselineUpdatedAt = null;
+  openPanel('panel-new-visit');
+  document.getElementById('visit-form-title').textContent = 'Nouvelle Fiche Visite';
+  document.getElementById('input-ipp').value = '';
+  document.getElementById('input-neuro').value = userInitials;
+  document.getElementById('input-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('input-heure').value = new Date().toTimeString().slice(0, 5);
+  document.getElementById('input-type').value = '';
+  renderVisitForm();
+}
+
+function groupSchemaForForm(defs) {
+  const testOrder = [];
+  const testGroups = {};
+  defs.forEach(d => {
+    if (!testGroups[d.test_name]) { testGroups[d.test_name] = { label: d.level_1, level2Order: [], level2groups: {} }; testOrder.push(d.test_name); }
+    const l2 = d.level_2 || '(général)';
+    if (!testGroups[d.test_name].level2groups[l2]) { testGroups[d.test_name].level2groups[l2] = []; testGroups[d.test_name].level2Order.push(l2); }
+    testGroups[d.test_name].level2groups[l2].push(d);
+  });
+  return { testOrder, testGroups };
+}
+function groupConsecutiveByLevel3(arr) {
+  const groups = [];
+  let current = null;
+  for (const d of arr) {
+    if (current && current.level_3 === d.level_3) current.items.push(d);
+    else { current = { level_3: d.level_3, items: [d] }; groups.push(current); }
+  }
+  return groups;
+}
+function fieldInputHtml(d) {
+  const id = 'field_' + d.column_name;
+  if (d.col_type === 'numeric') return `<input type="number" id="${id}" data-column="${d.column_name}" data-table="${d.test_name}" min="${d.col_min}" max="${d.col_max}" step="1">`;
+  if (d.col_type === 'categorical') {
+    const opts = (d.col_options || []).map(o => `<option value="${o}">${o}</option>`).join('');
+    return `<select id="${id}" data-column="${d.column_name}" data-table="${d.test_name}"><option value="">--</option>${opts}</select>`;
+  }
+  if (d.col_type === 'computed') return `<input type="text" id="${id}" data-column="${d.column_name}" data-table="${d.test_name}" class="computed-field" readonly value="0">`;
+  return `<input type="text" id="${id}" data-column="${d.column_name}" data-table="${d.test_name}">`;
+}
+function renderVisitForm() {
+  const container = document.getElementById('dynamic-fields-container');
+  if (!currentSchemaDefs.length) {
+    container.innerHTML = '<p><em>Aucun test clinique défini pour le moment. Utilisez "Créer un test clinique" d\'abord.</em></p>';
+    return;
+  }
+  const { testOrder, testGroups } = groupSchemaForForm(currentSchemaDefs);
+  const visibleTestOrder = testOrder.filter(t => visibleTestNames.has(t));
+  let html = '';
+  if (!visibleTestOrder.length) {
+    html = '<p><em>Tous les tests sont masqués par les filtres actuels (panneau "Filtres" à droite). Les visites resteront vides tant qu\'aucun test n\'est affiché.</em></p>';
+  }
+  visibleTestOrder.forEach(testName => {
+    const g = testGroups[testName];
+    html += `<details class="test-section" open><summary>${g.label} <span class="badge">${testName}</span></summary>`;
+    g.level2Order.forEach(l2 => {
+      html += `<div class="level2-group"><h4>${l2}</h4>`;
+      const level3Groups = groupConsecutiveByLevel3(g.level2groups[l2]);
+      level3Groups.forEach(l3group => {
+        const label = l3group.level_3 || l2;
+        html += `<div class="field-row"><span class="field-row-label">${label}</span><div class="field-row-inline">`;
+        l3group.items.forEach(d => {
+          const sublabel = d.level_4 || '';
+          const badge = d.col_type === 'computed' ? '<span class="badge computed">Σ</span>' : '';
+          html += `<div class="field-inline-item">${sublabel ? `<span>${sublabel}</span>` : ''}${fieldInputHtml(d)}${badge}</div>`;
+        });
+        html += `</div></div>`;
+      });
+      html += `</div>`;
+    });
+    html += `<button type="button" class="secondary" onclick="saveTestSection('${testName}')">💾 Enregistrer ${g.label}</button>`;
+    html += `</details>`;
+  });
+  container.innerHTML = html;
+  wireComputedFields(currentSchemaDefs);
+}
+function wireComputedFields(schemaDefs) {
+  const byGroup = {};
+  schemaDefs.forEach(d => { const key = d.test_name + '|' + d.level_2; (byGroup[key] ||= []).push(d); });
+  Object.values(byGroup).forEach(group => {
+    const computedDef = group.find(d => d.col_type === 'computed');
+    if (!computedDef) return;
+    const numericDefs = group.filter(d => d.col_type === 'numeric');
+    const computedInput = document.getElementById('field_' + computedDef.column_name);
+    if (!computedInput) return;
+    const recompute = () => {
+      let sum = 0;
+      numericDefs.forEach(d => {
+        const el = document.getElementById('field_' + d.column_name);
+        const v = el ? parseFloat(el.value) : NaN;
+        if (!isNaN(v)) sum += v;
+      });
+      computedInput.value = sum;
+    };
+    numericDefs.forEach(d => {
+      const el = document.getElementById('field_' + d.column_name);
+      if (el) el.addEventListener('input', recompute);
+    });
+    recompute();
+  });
+}
+
+// ---- SAUVEGARDE ----
+// upsertVisitesHeader : crée ou met à jour la ligne "visites" (IPP/date/heure/type).
+// Détecte un doublon sémantique (même IPP+date+type) uniquement à la création.
+// Lève une exception si la validation échoue ou si l'utilisateur annule sur doublon.
+function upsertVisitesHeader(freshDb) {
+  const ipp = document.getElementById('input-ipp').value.trim();
+  const dateVisite = document.getElementById('input-date').value;
+  const heure = document.getElementById('input-heure').value;
+  const type = document.getElementById('input-type').value;
+
+  if (ipp.length !== 10 || isNaN(ipp)) throw new Error("L'IPP doit contenir exactement 10 chiffres.");
+  if (!dateVisite) throw new Error("La date de visite est obligatoire.");
+  if (!type) throw new Error("Le type de visite est obligatoire.");
+
+  if (editingVisiteId) {
+    freshDb.run(`UPDATE visites SET demog_IPP=?, visite_date=?, visite_heure=?, visite_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      [ipp, dateVisite, heure, type, editingVisiteId]);
+    return editingVisiteId;
+  }
+
+  // Doublon sémantique potentiel : même patient, même date, même type de visite
+  const dupRows = dbSelect(freshDb, `SELECT demog_neuro, visite_heure FROM visites WHERE demog_IPP=? AND visite_date=? AND visite_type=?`, [ipp, dateVisite, type]);
+  if (dupRows.length) {
+    const d = dupRows[0];
+    const when = d.visite_heure ? ` à ${d.visite_heure}` : '';
+    const msg = `⚠️ Une visite "${type}" existe déjà pour ce patient le ${dateVisite}${d.demog_neuro ? ` (saisie par ${d.demog_neuro}${when})` : ''}.\n\nCréer quand même une nouvelle fiche ?`;
+    if (!confirm(msg)) throw new Error("Enregistrement annulé (doublon potentiel détecté).");
+  }
+
+  editingVisiteId = crypto.randomUUID();
+  freshDb.run(`INSERT INTO visites (id, demog_IPP, demog_neuro, visite_date, visite_heure, visite_type) VALUES (?,?,?,?,?,?)`,
+    [editingVisiteId, ipp, userInitials, dateVisite, heure, type]);
+  return editingVisiteId;
+}
+
+function collectTableValues(tableName, defs) {
+  const values = {};
+  let hasAny = false;
+  defs.forEach(d => {
+    const el = document.getElementById('field_' + d.column_name);
+    if (!el) return;
+    const val = el.value;
+    if (val !== '' && val !== null) hasAny = true;
+    values[d.column_name] = val === '' ? null : val;
+  });
+  return { values, hasAny };
+}
+function persistTestTableRow(freshDb, visiteId, tableName, values) {
+  const cols = Object.keys(values);
+  const existingRows = dbSelect(freshDb, `SELECT id FROM "${tableName}" WHERE visite_id = ?`, [visiteId]);
+  if (existingRows.length) {
+    const setClause = cols.map(c => `"${c}"=?`).join(',');
+    freshDb.run(`UPDATE "${tableName}" SET ${setClause}, updated_at=CURRENT_TIMESTAMP WHERE visite_id=?`, [...cols.map(c => values[c]), visiteId]);
+  } else {
+    const rowId = crypto.randomUUID();
+    const colList = ['id', 'visite_id', ...cols].map(c => `"${c}"`).join(',');
+    const placeholders = ['?', '?', ...cols.map(() => '?')].join(',');
+    freshDb.run(`INSERT INTO "${tableName}" (${colList}) VALUES (${placeholders})`, [rowId, visiteId, ...cols.map(c => values[c])]);
+  }
+}
+
+// Coeur de la sauvegarde, partagé entre "Sauvegarder la visite" (finalize=true, toutes les
+// tables) et les boutons "Enregistrer <test>" par section (finalize=false, une seule table).
+// finalize=false NE relâche PAS le verrou d'édition de visite : la session continue.
+async function commitVisit({ finalize, onlyTable }) {
+  await acquireLock(currentDbName); // verrou d'écriture disque, bref
+  try {
+    const freshDb = await readAndDecryptFreshDb();
+
+    // Filet de sécurité : quelqu'un d'autre a-t-il sauvegardé cette visite entre-temps ?
+    // (le verrou d'édition couvre déjà l'essentiel, ceci couvre les cas de verrou expiré/contourné)
+    if (editingVisiteId && editingVisiteBaselineUpdatedAt) {
+      const rows = dbSelect(freshDb, `SELECT updated_at FROM visites WHERE id=?`, [editingVisiteId]);
+      if (rows.length && rows[0].updated_at !== editingVisiteBaselineUpdatedAt) {
+        throw new Error("Cette visite a été modifiée entre-temps par un autre utilisateur. Rechargez la fiche (Chercher un IPP) avant de continuer, pour ne pas écraser ses modifications.");
+      }
+    }
+
+    const isNewVisit = !editingVisiteId;
+    const visiteId = upsertVisitesHeader(freshDb); // peut lever une exception (validation / doublon annulé)
+
+    if (isNewVisit) {
+      const lockResult = await acquireVisitLock(visiteId);
+      if (!lockResult.ok) throw new Error("Impossible d'obtenir le verrou d'édition pour cette nouvelle visite.");
+    }
+
+    const byTable = {};
+    currentSchemaDefs.forEach(d => { (byTable[d.test_name] ||= []).push(d); });
+    const tableNames = onlyTable ? [onlyTable] : Object.keys(byTable);
+
+    for (const tableName of tableNames) {
+      const defs = byTable[tableName];
+      if (!defs) continue;
+      const { values, hasAny } = collectTableValues(tableName, defs);
+      if (!hasAny) continue; // ne crée pas de ligne vide dans une table de test non renseignée
+      persistTestTableRow(freshDb, visiteId, tableName, values);
+    }
+
+    await writeDbFile(freshDb);
+    dbInstance = freshDb;
+
+    const refreshed = dbSelect(freshDb, `SELECT updated_at FROM visites WHERE id=?`, [visiteId]);
+    editingVisiteBaselineUpdatedAt = refreshed[0]?.updated_at || editingVisiteBaselineUpdatedAt;
+
+    if (finalize) {
+      showSuccess("Visite enregistrée avec succès.");
+      await releaseVisitLock(visiteId);
+      editingVisiteId = null;
+      editingVisiteBaselineUpdatedAt = null;
+      document.getElementById('panel-new-visit').classList.add('hidden');
+    } else {
+      showSuccess(`Section "${onlyTable}" enregistrée (${new Date().toLocaleTimeString()}). La fiche reste ouverte.`);
+    }
+  } catch (err) {
+    showError("Erreur lors de l'enregistrement : " + err.message);
+  } finally {
+    await releaseLock(currentDbName);
+  }
+}
+
+async function saveVisit() { await commitVisit({ finalize: true }); }
+async function saveTestSection(testName) { await commitVisit({ finalize: false, onlyTable: testName }); }
+</script>
+</body>
+</html>
