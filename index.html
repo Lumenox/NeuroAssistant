@@ -325,6 +325,14 @@
 
   <div id="protocole-manager-list" style="margin-top:14px;"></div>
 
+  <div class="actions-block">
+    <button onclick="exportAllProtocoles()" class="secondary">⬇️ Exporter tous les protocoles</button>
+    <label class="secondary" style="text-align:center; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+      ⬆️ Importer des protocoles
+      <input type="file" accept=".json" style="display:none;" onchange="importProtocolesFromFile(this)">
+    </label>
+  </div>
+  
   <hr>
   <h4>Créer / modifier un protocole</h4>
   <input type="hidden" id="protocole-editor-id">
@@ -1104,7 +1112,61 @@ function exportSingleProtocole(protocoleId) {
   a.href = url; a.download = `protocole_${slugify(p.name)}.json`; a.click();
   URL.revokeObjectURL(url);
 }
+  
+function exportAllProtocoles() {
+  const protocoles = loadProtocoles(dbInstance);
+  if (!protocoles.length) { showError("Aucun protocole à exporter."); return; }
+  const blob = new Blob([JSON.stringify({ protocoles }, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'protocoles_export.json'; a.click();
+  URL.revokeObjectURL(url);
+}
 
+async function importProtocolesFromFile(fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  let data;
+  try { data = JSON.parse(await file.text()); }
+  catch (e) { showError("Fichier JSON invalide."); return; }
+
+  // Accepte le format export global {protocoles:[...]} OU un export individuel {name, test_names,...}
+  const incoming = Array.isArray(data.protocoles) ? data.protocoles : (data.name && data.test_names ? [data] : null);
+  if (!incoming) { showError("Format de fichier non reconnu."); return; }
+
+  const knownTests = new Set(allTestNamesInSchema());
+  const toImport = [];
+  const warnings = [];
+  incoming.forEach(p => {
+    const validTests = (p.test_names || []).filter(t => knownTests.has(t));
+    const skipped = (p.test_names || []).filter(t => !knownTests.has(t));
+    if (skipped.length) warnings.push(`"${p.name}" : test(s) absent(s) de cette base ignoré(s) : ${skipped.join(', ')}`);
+    if (!validTests.length) { warnings.push(`"${p.name}" : ignoré entièrement (aucun test correspondant ici).`); return; }
+    toImport.push({ id: crypto.randomUUID(), name: p.name + ' (importé)', test_names: validTests, created_by: userInitials });
+  });
+
+  if (!toImport.length) { showError("Aucun protocole importable. " + warnings.join(' ')); fileInput.value=''; return; }
+
+  await acquireLock(currentDbName);
+  try {
+    const freshDb = await readAndDecryptFreshDb();
+    ensureProtocolesTable(freshDb);
+    toImport.forEach(p => {
+      freshDb.run(`INSERT INTO _protocoles (id, name, test_names, created_by) VALUES (?,?,?,?)`,
+        [p.id, p.name, JSON.stringify(p.test_names), p.created_by]);
+    });
+    await writeDbFile(freshDb);
+    dbInstance = freshDb;
+    showSuccess(`${toImport.length} protocole(s) importé(s).` + (warnings.length ? ' ⚠️ ' + warnings.join(' ') : ''));
+    renderProtocoleManagerList();
+    renderProtocoleList();
+  } catch (err) {
+    showError("Erreur lors de l'import : " + err.message);
+  } finally {
+    await releaseLock(currentDbName);
+    fileInput.value = '';
+  }
+}
 // ==================================================================================
 // SCRIPTS DE CR : bibliothèque partagée de modèles de compte-rendu, stockée dans un
 // fichier JSON EXTERNE (cr_templates.json), non chiffré, indépendant du cycle de vie
@@ -1890,25 +1952,39 @@ function renderVisitForm() {
   container.innerHTML = html;
   wireComputedFields(currentSchemaDefs);
 }
+
+function computedFieldDepth(d) {
+  const levels = [d.level_1, d.level_2, d.level_3, d.level_4];
+  let depth = 0;
+  for (let i = 0; i < 4; i++) if (levels[i]) depth = i + 1;
+  return { levels, depth };
+}
+
 function wireComputedFields(schemaDefs) {
-  const byGroup = {};
-  schemaDefs.forEach(d => { const key = d.test_name + '|' + d.level_2; (byGroup[key] ||= []).push(d); });
-  Object.values(byGroup).forEach(group => {
-    const computedDef = group.find(d => d.col_type === 'computed');
-    if (!computedDef) return;
-    const numericDefs = group.filter(d => d.col_type === 'numeric');
+  const computedDefs = schemaDefs.filter(d => d.col_type === 'computed');
+  computedDefs.forEach(computedDef => {
+    const { levels: cLevels, depth: cDepth } = computedFieldDepth(computedDef);
+    const prefix = cLevels.slice(0, Math.max(cDepth - 1, 0)); // niveaux AU-DESSUS du "total" lui-même
+
+    const siblings = schemaDefs.filter(d => {
+      if (d.col_type !== 'numeric' || d.test_name !== computedDef.test_name) return false;
+      const dLevels = [d.level_1, d.level_2, d.level_3, d.level_4];
+      return prefix.every((val, i) => dLevels[i] === val);
+    });
+
     const computedInput = document.getElementById('field_' + computedDef.column_name);
     if (!computedInput) return;
+
     const recompute = () => {
       let sum = 0;
-      numericDefs.forEach(d => {
+      siblings.forEach(d => {
         const el = document.getElementById('field_' + d.column_name);
         const v = el ? parseFloat(el.value) : NaN;
         if (!isNaN(v)) sum += v;
       });
       computedInput.value = sum;
     };
-    numericDefs.forEach(d => {
+    siblings.forEach(d => {
       const el = document.getElementById('field_' + d.column_name);
       if (el) el.addEventListener('input', recompute);
     });
