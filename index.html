@@ -85,16 +85,10 @@
     <h4>Protocoles</h4>
     <div id="protocole-list"></div>
     <button class="secondary" style="width:100%; margin-top:8px;" onclick="resetScoreFilters()">🔄 Réinitialiser (tout afficher)</button>
+    <button id="btn-manage-protocoles" class="hidden warn-btn" style="width:100%; margin-top:8px;" onclick="openProtocoleManagerModal()">⚙️ Gérer les protocoles</button>
 
     <h4>Scores affichés</h4>
     <div id="score-filter-list"></div>
-
-    <div id="admin-protocole-create" class="hidden">
-      <h4>Créer un protocole (admin)</h4>
-      <input type="text" id="new-protocole-name" placeholder="Nom du protocole" style="margin-bottom:8px;">
-      <div id="new-protocole-checkboxes"></div>
-      <button class="warn-btn" style="width:100%;" onclick="createProtocole()">➕ Créer le protocole</button>
-    </div>
   </div>
 </div>
 
@@ -258,6 +252,7 @@
 
       <div class="actions-block">
         <button onclick="saveVisit()" class="success-btn">💾 Sauvegarder la visite</button>
+        <button onclick="saveVisitAndGenerateCr()" class="secondary">📄 Sauvegarder et générer un CR</button>
         <button onclick="openGenerateCrModal()" id="btn-generate-cr" class="secondary" disabled>📄 Générer un CR</button>
       </div>
 
@@ -274,6 +269,8 @@
         </div>
       </div>
     </div>
+
+    
 
     <!-- ======== PANEL: bibliothèque de scripts de CR ======== -->
     <div id="panel-cr-scripts" class="hidden form-group">
@@ -319,6 +316,24 @@
 
     <div id="db-status-error" class="error hidden"></div>
     <div id="db-status-success" class="success hidden"></div>
+  </div>
+</div>
+
+<div id="protocole-manager-modal" class="hidden modal" style="position:fixed; top:60px; left:50%; transform:translateX(-50%); z-index:1000; max-width:500px; width:90%; max-height:80vh; overflow-y:auto;">
+  <h3>Gérer les protocoles</h3>
+  <button class="secondary" onclick="closeProtocoleManagerModal()">Fermer</button>
+
+  <div id="protocole-manager-list" style="margin-top:14px;"></div>
+
+  <hr>
+  <h4>Créer / modifier un protocole</h4>
+  <input type="hidden" id="protocole-editor-id">
+  <label for="protocole-editor-name">Nom du protocole</label>
+  <input type="text" id="protocole-editor-name">
+  <div id="protocole-editor-checkboxes" style="margin:10px 0;"></div>
+  <div class="actions-block">
+    <button onclick="saveProtocoleFromModal()" class="success-btn">💾 Enregistrer</button>
+    <button onclick="resetProtocoleEditorForm()" class="secondary">Nouveau (vider le formulaire)</button>
   </div>
 </div>
 
@@ -476,6 +491,7 @@ async function applySession(session) {
     if (profile.permissions.db_admin === true) {
       isDbAdmin = true;
       document.getElementById('btn-admin-toggle').classList.remove('hidden');
+      document.getElementById('btn-manage-protocoles').classList.remove('hidden');
     }
   }
   document.getElementById('view-login').classList.add('hidden');
@@ -910,7 +926,7 @@ function renderFilterFlyout() {
   document.getElementById('filter-flyout').classList.add('active');
   renderScoreCheckboxList();
   renderProtocoleList();
-  if (isDbAdmin) renderAdminProtocoleCreator();
+  //if (isDbAdmin) renderAdminProtocoleCreator();
 }
 
 function testLabels() {
@@ -977,40 +993,116 @@ function resetScoreFilters() {
   refreshVisitFormIfOpen();
 }
 
-function renderAdminProtocoleCreator() {
-  document.getElementById('admin-protocole-create').classList.remove('hidden');
-  const zone = document.getElementById('new-protocole-checkboxes');
-  const byTest = testLabels();
-  let html = '';
-  Object.entries(byTest).forEach(([testName, label]) => {
-    html += `<label class="filter-checkbox-row"><input type="checkbox" class="new-protocole-test-cb" value="${testName}"> ${label}</label>`;
-  });
-  zone.innerHTML = html || '<p><small>Aucun test disponible.</small></p>';
+
+
+function openProtocoleManagerModal() {
+  document.getElementById('protocole-manager-modal').classList.remove('hidden');
+  resetProtocoleEditorForm();
+  renderProtocoleManagerList();
+}
+function closeProtocoleManagerModal() {
+  document.getElementById('protocole-manager-modal').classList.add('hidden');
 }
 
-async function createProtocole() {
-  const name = document.getElementById('new-protocole-name').value.trim();
+function renderProtocoleManagerList() {
+  const zone = document.getElementById('protocole-manager-list');
+  const protocoles = loadProtocoles(dbInstance);
+  if (!protocoles.length) { zone.innerHTML = '<p><small>Aucun protocole créé.</small></p>'; return; }
+  let html = '';
+  protocoles.forEach(p => {
+    html += `<div class="ipp-result-row">
+      <span>${escapeHtml(p.name)} <small style="color:#7f8c8d;">(${p.test_names.length} test(s))</small></span>
+      <div style="display:flex; gap:6px;">
+        <button class="secondary" style="padding:6px 10px; margin:0;" onclick="loadProtocoleIntoEditor('${p.id}')">Modifier</button>
+        <button class="secondary" style="padding:6px 10px; margin:0;" onclick="exportSingleProtocole('${p.id}')">Exporter</button>
+        <button class="danger-btn" style="padding:6px 10px; margin:0;" onclick="deleteProtocole('${p.id}')">Supprimer</button>
+      </div>
+    </div>`;
+  });
+  zone.innerHTML = html;
+}
+
+function resetProtocoleEditorForm() {
+  document.getElementById('protocole-editor-id').value = '';
+  document.getElementById('protocole-editor-name').value = '';
+  const zone = document.getElementById('protocole-editor-checkboxes');
+  const byTest = testLabels();
+  zone.innerHTML = Object.entries(byTest).map(([testName, label]) =>
+    `<label class="filter-checkbox-row"><input type="checkbox" class="protocole-editor-test-cb" value="${testName}"> ${label}</label>`
+  ).join('') || '<p><small>Aucun test disponible.</small></p>';
+}
+
+function loadProtocoleIntoEditor(protocoleId) {
+  const p = loadProtocoles(dbInstance).find(x => x.id === protocoleId);
+  if (!p) return;
+  resetProtocoleEditorForm();
+  document.getElementById('protocole-editor-id').value = p.id;
+  document.getElementById('protocole-editor-name').value = p.name;
+  document.querySelectorAll('.protocole-editor-test-cb').forEach(cb => {
+    cb.checked = p.test_names.includes(cb.value);
+  });
+}
+
+async function saveProtocoleFromModal() {
+  const id = document.getElementById('protocole-editor-id').value;
+  const name = document.getElementById('protocole-editor-name').value.trim();
   if (!name) { showError("Le nom du protocole est obligatoire."); return; }
-  const checked = [...document.querySelectorAll('.new-protocole-test-cb:checked')].map(el => el.value);
-  if (!checked.length) { showError("Sélectionnez au moins un test pour ce protocole."); return; }
+  const checked = [...document.querySelectorAll('.protocole-editor-test-cb:checked')].map(el => el.value);
+  if (!checked.length) { showError("Sélectionnez au moins un test."); return; }
 
   await acquireLock(currentDbName);
   try {
     const freshDb = await readAndDecryptFreshDb();
     ensureProtocolesTable(freshDb);
-    freshDb.run(`INSERT INTO _protocoles (id, name, test_names, created_by) VALUES (?,?,?,?)`,
-      [crypto.randomUUID(), name, JSON.stringify(checked), userInitials]);
+    if (id) {
+      freshDb.run(`UPDATE _protocoles SET name=?, test_names=? WHERE id=?`, [name, JSON.stringify(checked), id]);
+    } else {
+      freshDb.run(`INSERT INTO _protocoles (id, name, test_names, created_by) VALUES (?,?,?,?)`,
+        [crypto.randomUUID(), name, JSON.stringify(checked), userInitials]);
+    }
     await writeDbFile(freshDb);
     dbInstance = freshDb;
-    showSuccess(`Protocole "${name}" créé.`);
-    document.getElementById('new-protocole-name').value = '';
-    document.querySelectorAll('.new-protocole-test-cb').forEach(cb => cb.checked = false);
-    renderProtocoleList();
+    showSuccess(`Protocole "${name}" enregistré.`);
+    resetProtocoleEditorForm();
+    renderProtocoleManagerList();
+    renderProtocoleList(); // rafraîchit aussi le flyout de filtres
   } catch (err) {
-    showError("Erreur lors de la création du protocole : " + err.message);
+    showError("Erreur : " + err.message);
   } finally {
     await releaseLock(currentDbName);
   }
+}
+
+async function deleteProtocole(protocoleId) {
+  const p = loadProtocoles(dbInstance).find(x => x.id === protocoleId);
+  if (!p) return;
+  if (!confirm(`Supprimer le protocole "${p.name}" ?`)) return;
+
+  await acquireLock(currentDbName);
+  try {
+    const freshDb = await readAndDecryptFreshDb();
+    freshDb.run(`DELETE FROM _protocoles WHERE id=?`, [protocoleId]);
+    await writeDbFile(freshDb);
+    dbInstance = freshDb;
+    if (activeProtocoleId === protocoleId) resetScoreFilters();
+    showSuccess(`Protocole "${p.name}" supprimé.`);
+    renderProtocoleManagerList();
+    renderProtocoleList();
+  } catch (err) {
+    showError("Erreur : " + err.message);
+  } finally {
+    await releaseLock(currentDbName);
+  }
+}
+
+function exportSingleProtocole(protocoleId) {
+  const p = loadProtocoles(dbInstance).find(x => x.id === protocoleId);
+  if (!p) return;
+  const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `protocole_${slugify(p.name)}.json`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ==================================================================================
@@ -1690,6 +1782,7 @@ async function loadVisitForEdit(visiteId) {
 
   editingVisiteId = visiteId;
   editingVisiteBaselineUpdatedAt = v.updated_at;
+  document.getElementById('btn-generate-cr').disabled = false;
 
   openPanel('panel-new-visit');
   renderVisitForm();
@@ -1887,7 +1980,7 @@ function persistTestTableRow(freshDb, visiteId, tableName, values) {
 // Coeur de la sauvegarde, partagé entre "Sauvegarder la visite" (finalize=true, toutes les
 // tables) et les boutons "Enregistrer <test>" par section (finalize=false, une seule table).
 // finalize=false NE relâche PAS le verrou d'édition de visite : la session continue.
-async function commitVisit({ finalize, onlyTable }) {
+async function commitVisit({ finalize, onlyTable, keepOpen }) {
   await acquireLock(currentDbName); // verrou d'écriture disque, bref
   try {
     const freshDb = await readAndDecryptFreshDb();
@@ -1929,13 +2022,18 @@ async function commitVisit({ finalize, onlyTable }) {
 
     if (finalize) {
       showSuccess("Visite enregistrée avec succès.");
-      await releaseVisitLock(visiteId);
-      editingVisiteId = null;
-      editingVisiteBaselineUpdatedAt = null;
-      document.getElementById('panel-new-visit').classList.add('hidden');
+      if (keepOpen) {
+        document.getElementById('btn-generate-cr').disabled = false;
+      } else {
+        await releaseVisitLock(visiteId);
+        editingVisiteId = null;
+        editingVisiteBaselineUpdatedAt = null;
+        document.getElementById('panel-new-visit').classList.add('hidden');
+      }
     } else {
-      showSuccess(`Section "${onlyTable}" enregistrée (${new Date().toLocaleTimeString()}). La fiche reste ouverte.`);
-    }
+  document.getElementById('btn-generate-cr').disabled = false; // une section sauvegardée => la visite existe déjà
+  showSuccess(`Section "${onlyTable}" enregistrée (${new Date().toLocaleTimeString()}). La fiche reste ouverte.`);
+}
   } catch (err) {
     showError("Erreur lors de l'enregistrement : " + err.message);
   } finally {
@@ -1945,6 +2043,10 @@ async function commitVisit({ finalize, onlyTable }) {
 
 async function saveVisit() { await commitVisit({ finalize: true }); }
 async function saveTestSection(testName) { await commitVisit({ finalize: false, onlyTable: testName }); }
+async function saveVisitAndGenerateCr() {
+  const ok = await commitVisit({ finalize: true, keepOpen: true });
+  if (ok) await openGenerateCrModal();
+}
 </script>
 </body>
 </html>
