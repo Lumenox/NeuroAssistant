@@ -429,6 +429,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (savedHandle) {
       document.getElementById('btn-resume-db').textContent = `⏪ Reprendre "${savedHandle.name}"`;
       document.getElementById('resume-db-zone').classList.remove('hidden');
+      document.getElementById('input-ipp').addEventListener('blur', prefillAntecedentsForCurrentIpp);
     }
   } catch (e) { /* IndexedDB indisponible : tant pis, pas bloquant */ }
 });
@@ -1976,12 +1977,22 @@ async function loadVisitForEdit(visiteId) {
 
   openPanel('panel-new-visit');
   renderVisitForm();
+
+  
   document.getElementById('visit-form-title').textContent = `Modifier la visite du ${v.visite_date}`;
   document.getElementById('input-ipp').value = v.demog_IPP;
   document.getElementById('input-date').value = v.visite_date;
   document.getElementById('input-heure').value = v.visite_heure || '';
   document.getElementById('input-type').value = v.visite_type || '';
 
+  ['diag-suspecte','diag-confirme','diag-secondaire','diag-tertiaire'].forEach(id => {
+  const col = 'diagnostic_' + id.split('-')[1];
+  let codes = [];
+  try { codes = JSON.parse(v[col] || '[]'); } catch (e) {}
+  initCim10Picker(id, codes);
+});
+prefillAntecedentsForCurrentIpp(); // voir ci-dessous, réutilisé aussi au blur de l'IPP
+  
   // pré-remplissage des champs dynamiques depuis chaque table de test
   const byTable = {};
   currentSchemaDefs.forEach(d => { (byTable[d.test_name] ||= []).push(d); });
@@ -2013,6 +2024,7 @@ async function startNewVisit() {
   document.getElementById('input-heure').value = new Date().toTimeString().slice(0, 5);
   document.getElementById('input-type').value = '';
   renderVisitForm();
+  ['diag-suspecte','diag-confirme','diag-secondaire','diag-tertiaire','antecedent-med','antecedent-chir'].forEach(id => initCim10Picker(id, []));
 }
 
 function groupSchemaForForm(defs) {
@@ -2082,6 +2094,16 @@ function renderVisitForm() {
   wireComputedFields(currentSchemaDefs);
 }
 
+function prefillAntecedentsForCurrentIpp() {
+  const ipp = document.getElementById('input-ipp').value.trim();
+  if (ipp.length !== 10 || isNaN(ipp) || !dbInstance) { initCim10Picker('antecedent-med', []); initCim10Picker('antecedent-chir', []); return; }
+  const rows = dbSelect(dbInstance, `SELECT antecedent_med, antecedent_chir FROM _patient_antecedents WHERE demog_IPP=?`, [ipp]);
+  const med = rows.length ? JSON.parse(rows[0].antecedent_med || '[]') : [];
+  const chir = rows.length ? JSON.parse(rows[0].antecedent_chir || '[]') : [];
+  initCim10Picker('antecedent-med', med);
+  initCim10Picker('antecedent-chir', chir);
+}
+
 function computedFieldDepth(d) {
   const levels = [d.level_1, d.level_2, d.level_3, d.level_4];
   let depth = 0;
@@ -2130,13 +2152,17 @@ function upsertVisitesHeader(freshDb) {
   const dateVisite = document.getElementById('input-date').value;
   const heure = document.getElementById('input-heure').value;
   const type = document.getElementById('input-type').value;
-
+  const diagS = JSON.stringify(cim10PickerValues['diag-suspecte'] || []);
+const diagC = JSON.stringify(cim10PickerValues['diag-confirme'] || []);
+const diagSec = JSON.stringify(cim10PickerValues['diag-secondaire'] || []);
+const diagTer = JSON.stringify(cim10PickerValues['diag-tertiaire'] || []);
+  
   if (ipp.length !== 10 || isNaN(ipp)) throw new Error("L'IPP doit contenir exactement 10 chiffres.");
   if (!dateVisite) throw new Error("La date de visite est obligatoire.");
   if (!type) throw new Error("Le type de visite est obligatoire.");
 
   if (editingVisiteId) {
-    freshDb.run(`UPDATE visites SET demog_IPP=?, visite_date=?, visite_heure=?, visite_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+    freshDb.run(`UPDATE visites SET demog_IPP=?, visite_date=?, visite_heure=?, visite_type=?, diagnostic_suspecte=?, diagnostic_confirme=?, diagnostic_secondaire=?, diagnostic_tertiaire=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
       [ipp, dateVisite, heure, type, editingVisiteId]);
     return editingVisiteId;
   }
@@ -2151,11 +2177,22 @@ function upsertVisitesHeader(freshDb) {
   }
 
   editingVisiteId = crypto.randomUUID();
-  freshDb.run(`INSERT INTO visites (id, demog_IPP, demog_neuro, visite_date, visite_heure, visite_type) VALUES (?,?,?,?,?,?)`,
+  freshDb.run(`INSERT INTO visites (id, demog_IPP, demog_neuro, visite_date, visite_heure, visite_type, diagnostic_suspecte, diagnostic_confirme, diagnostic_secondaire, diagnostic_tertiaire) VALUES (?,?,?,?,?,?, ?, ?, ?, ?)`,
     [editingVisiteId, ipp, userInitials, dateVisite, heure, type]);
   return editingVisiteId;
 }
 
+function upsertPatientAntecedents(freshDb, ipp) {
+  const med = JSON.stringify(cim10PickerValues['antecedent-med'] || []);
+  const chir = JSON.stringify(cim10PickerValues['antecedent-chir'] || []);
+  const existing = dbSelect(freshDb, `SELECT demog_IPP FROM _patient_antecedents WHERE demog_IPP=?`, [ipp]);
+  if (existing.length) {
+    freshDb.run(`UPDATE _patient_antecedents SET antecedent_med=?, antecedent_chir=?, updated_at=CURRENT_TIMESTAMP WHERE demog_IPP=?`, [med, chir, ipp]);
+  } else {
+    freshDb.run(`INSERT INTO _patient_antecedents (demog_IPP, antecedent_med, antecedent_chir) VALUES (?,?,?)`, [ipp, med, chir]);
+  }
+}
+  
 function collectTableValues(tableName, defs) {
   const values = {};
   let hasAny = false;
@@ -2201,7 +2238,8 @@ async function commitVisit({ finalize, onlyTable, keepOpen }) {
 
     const isNewVisit = !editingVisiteId;
     const visiteId = upsertVisitesHeader(freshDb); // peut lever une exception (validation / doublon annulé)
-
+    upsertPatientAntecedents(freshDb, document.getElementById('input-ipp').value.trim());
+    
     if (isNewVisit) {
       const lockResult = await acquireVisitLock(visiteId);
       if (!lockResult.ok) throw new Error("Impossible d'obtenir le verrou d'édition pour cette nouvelle visite.");
