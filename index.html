@@ -725,8 +725,6 @@ async function finalizeNewDatabase(fileHandle) {
       diagnostic_tertiaire TEXT,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
     CREATE TABLE _schema_defs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       test_name TEXT NOT NULL,
