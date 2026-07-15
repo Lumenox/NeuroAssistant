@@ -1446,16 +1446,19 @@ function closeCrTemplateEditor() {
 
 function renderCrVariablePanel() {
   const visitZone = document.getElementById('cr-var-visit-fields');
-  visitZone.innerHTML = VISIT_LEVEL_FIELDS.map(f =>
-    `<div class="filter-checkbox-row" onclick="insertVariableAtCursor('${f.name}')">➕ ${f.label}</div>`
-  ).join('');
 
+  visitZone.innerHTML =
+  VISIT_LEVEL_FIELDS.map(f => `<div class="filter-checkbox-row" onclick="insertVariableAtCursor('${f.name}')">➕ ${f.label}</div>`).join('') +
+  ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire','antecedent_med','antecedent_chir']
+    .map(n => `<div class="filter-checkbox-row" onclick="insertVariableAtCursor('${n}')">➕ ${n.replace('_',' ')}</div>`).join('');
+  
   const scoreZone = document.getElementById('cr-var-score-fields');
   const byTest = {};
   currentSchemaDefs.forEach(d => { (byTest[d.test_name] ||= []).push(d); });
   let html = '';
   Object.entries(byTest).forEach(([testName, defs]) => {
     html += `<div><strong style="font-size:12.5px;">${escapeHtml(defs[0].level_1)}</strong>`;
+    html += `<div class="filter-checkbox-row" style="padding-left:8px; font-size:12px; color:#8e44ad;" onclick="insertAtSyntaxAtCursor('${testName}')">➕ @${testName} (tout le bloc)</div>`;
     defs.forEach(d => {
       const label = [d.level_2, d.level_3, d.level_4].filter(Boolean).join(' / ') || d.level_1;
       html += `<div class="filter-checkbox-row" style="padding-left:8px; font-size:12px;" onclick="insertVariableAtCursor('${d.column_name}')" title="{${d.column_name}}">➕ ${escapeHtml(label)}</div>`;
@@ -1477,10 +1480,23 @@ function insertVariableAtCursor(columnName) {
   textarea.setSelectionRange(newPos, newPos);
   validateCrTemplateBody();
 }
+function insertAtSyntaxAtCursor(testName) {
+  const textarea = document.getElementById('cr-editor-body');
+  if (textarea.readOnly) return;
+  const token = `@${testName}`;
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  textarea.value = textarea.value.slice(0, start) + token + textarea.value.slice(end);
+  const newPos = start + token.length;
+  textarea.focus();
+  textarea.setSelectionRange(newPos, newPos);
+  validateCrTemplateBody();
+}
 
 // ---- Validation des placeholders (en direct, à chaque frappe + avant sauvegarde) ----
 function knownPlaceholderNames() {
   const names = new Set(VISIT_LEVEL_FIELDS.map(f => f.name));
+  ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire','antecedent_med','antecedent_chir'].forEach(n => names.add(n));
   currentSchemaDefs.forEach(d => names.add(d.column_name));
   return names;
 }
@@ -1488,13 +1504,30 @@ function extractPlaceholders(text) {
   const matches = text.match(/\{([a-zA-Z0-9_\-]+)\}/g) || [];
   return [...new Set(matches.map(m => m.slice(1, -1)))];
 }
+function testColumnsMatchingPrefix(prefix) {
+  return currentSchemaDefs.filter(d => d.column_name === prefix || d.column_name.startsWith(prefix + '_'));
+}
+function extractPlaceholderTokens(text) {
+  const regex = /\{([a-zA-Z0-9_\-]+)\}|@([a-zA-Z0-9_\-]+)/g;
+  const tokens = []; let m;
+  while ((m = regex.exec(text)) !== null) tokens.push(m[1] ? { type: 'brace', name: m[1] } : { type: 'at', name: m[2] });
+  return tokens;
+}
 function validateCrTemplateBody() {
   const text = document.getElementById('cr-editor-body').value;
   const known = knownPlaceholderNames();
-  const unknown = extractPlaceholders(text).filter(p => !known.has(p));
+  const seen = new Set();
+  const problems = [];
+  extractPlaceholderTokens(text).forEach(t => {
+    const key = t.type + ':' + t.name;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (t.type === 'brace' && !known.has(t.name)) problems.push(`{${t.name}}`);
+    if (t.type === 'at' && testColumnsMatchingPrefix(t.name).length === 0) problems.push(`@${t.name}`);
+  });
   const errEl = document.getElementById('cr-editor-validation');
-  if (unknown.length) {
-    errEl.textContent = `⚠️ Variable(s) inconnue(s) : ${unknown.map(u => '{' + u + '}').join(', ')} — utilisez le panneau de gauche pour insérer des variables valides.`;
+  if (problems.length) {
+    errEl.textContent = `⚠️ Référence(s) inconnue(s) : ${problems.join(', ')} — utilisez le panneau de gauche pour insérer des variables valides.`;
     errEl.classList.remove('hidden');
     return false;
   }
@@ -1620,6 +1653,16 @@ function collectCurrentVisiteData() {
     const row = rows[0];
     Object.keys(row).forEach(col => { values[col] = row[col]; });
   });
+
+  ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire'].forEach(col => {
+  let codes = [];
+  try { codes = JSON.parse(v[col] || '[]'); } catch (e) {}
+  values[col] = codes.map(c => cim10Label(c)).join('; ');
+});
+const anteRows = dbSelect(dbInstance, `SELECT antecedent_med, antecedent_chir FROM _patient_antecedents WHERE demog_IPP=?`, [v.demog_IPP]);
+values['antecedent_med'] = anteRows.length ? JSON.parse(anteRows[0].antecedent_med || '[]').map(c => cim10Label(c)).join('; ') : '';
+values['antecedent_chir'] = anteRows.length ? JSON.parse(anteRows[0].antecedent_chir || '[]').map(c => cim10Label(c)).join('; ') : '';
+  
   return values;
 }
 
@@ -1632,12 +1675,23 @@ function renderCrGenerationPreview() {
   const missing = [];
   const unknownRefs = [];
 
-  const output = t.body.replace(/\{([a-zA-Z0-9_\-]+)\}/g, (match, name) => {
+  let output = t.body.replace(/\{([a-zA-Z0-9_\-]+)\}/g, (match, name) => {
     if (!known.has(name)) { unknownRefs.push(name); return `[colonne inconnue: ${name}]`; }
     const val = values[name];
     if (val === undefined || val === null || val === '') { missing.push(name); return 'NAN'; }
     return String(val);
   });
+
+  output = output.replace(/@([a-zA-Z0-9_\-]+)/g, (match, prefix) => {
+  const cols = testColumnsMatchingPrefix(prefix);
+  if (!cols.length) { unknownRefs.push('@' + prefix); return `[bloc inconnu: ${prefix}]`; }
+  return cols.map(d => {
+    const label = [d.level_2, d.level_3, d.level_4].filter(Boolean).join(' / ') || d.level_1;
+    const val = values[d.column_name];
+    if (val === undefined || val === null || val === '') { missing.push(d.column_name); return `${label} : NAN`; }
+    return `${label} : ${val}`;
+  }).join('\n');
+});
 
   const banner = document.getElementById('cr-generate-missing-banner');
   const msgs = [];
