@@ -82,6 +82,37 @@
 .cim10-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .cim10-chip { background: #eaf2f8; color: #2980b9; padding: 4px 8px; border-radius: 14px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
 .cim10-chip span { cursor: pointer; font-weight: 700; }
+
+.visit-block {
+  background: #f8f9fa;
+  border-left: 4px solid #3498db;
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+}
+.visit-block h4 {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #7f8c8d;
+}
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px 20px;
+  align-items: start;
+}
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 4px 16px;
+  align-items: start;
+}
+.field-grid > div { margin: 0; }
+.field-grid label { margin-top: 0; }
+
+
   
 </style>
 </head>
@@ -237,63 +268,89 @@
       <h3 id="visit-form-title">Nouvelle Fiche Visite</h3>
       <button class="secondary" onclick="closePanel('panel-new-visit')">← Retour au menu</button>
 
-      <label for="input-ipp">demog_IPP (10 chiffres)</label>
-      <input type="text" id="input-ipp" maxlength="10" placeholder="Ex: 1234567890">
-      <label for="input-neuro">demog_neuro (initiales)</label>
-      <input type="text" id="input-neuro" readonly>
-      <label for="input-date">visite_date</label>
-      <input type="date" id="input-date">
-      <label for="input-heure">Heure</label>
-      <input type="time" id="input-heure">
-      <label for="input-type">visite_type</label>
-      <select id="input-type">
-        <option value="">-- choisir --</option>
-        <option value="consultation">consultation</option>
-        <option value="HDJ">HDJ</option>
-        <option value="HC">HC</option>
-        <option value="HDS">HDS</option>
-        <option value="USINV">USINV</option>
-        <option value="UNV">UNV</option>
-        <option value="avis">avis</option>
-        <option value="recherche">recherche</option>
-      </select>
+<div class="visit-block">
+        <h4>Informations de la visite</h4>
+        <div class="field-grid">
+          <div>
+            <label for="input-ipp">demog_IPP</label>
+            <input type="text" id="input-ipp" maxlength="10" placeholder="Ex: 1234567890">
+          </div>
+          <div>
+            <label for="input-neuro">Initiales</label>
+            <input type="text" id="input-neuro" readonly>
+          </div>
+          <div>
+            <label for="input-date">Date</label>
+            <input type="date" id="input-date">
+          </div>
+          <div>
+            <label for="input-heure">Heure</label>
+            <input type="time" id="input-heure">
+          </div>
+          <div>
+            <label for="input-type">Type</label>
+            <select id="input-type">
+              <option value="">-- choisir --</option>
+              <option value="consultation">consultation</option>
+              <option value="HDJ">HDJ</option>
+              <option value="HC">HC</option>
+              <option value="HDS">HDS</option>
+              <option value="USINV">USINV</option>
+              <option value="UNV">UNV</option>
+              <option value="avis">avis</option>
+              <option value="recherche">recherche</option>
+            </select>
+          </div>
+        </div>
+      </div>
 
-      <div class="cim10-field">
-  <label>Diagnostic suspecté</label>
-  <input type="text" id="diag-suspecte-search" placeholder="Rechercher (code ou libellé)...">
-  <div id="diag-suspecte-dropdown" class="cim10-dropdown hidden"></div>
-  <div id="diag-suspecte-chips" class="cim10-chips"></div>
-</div>
-<div class="cim10-field">
-  <label>Diagnostic confirmé</label>
-  <input type="text" id="diag-confirme-search" placeholder="Rechercher (code ou libellé)...">
-  <div id="diag-confirme-dropdown" class="cim10-dropdown hidden"></div>
-  <div id="diag-confirme-chips" class="cim10-chips"></div>
-</div>
-<div class="cim10-field">
-  <label>Diagnostic secondaire</label>
-  <input type="text" id="diag-secondaire-search" placeholder="Rechercher (code ou libellé)...">
-  <div id="diag-secondaire-dropdown" class="cim10-dropdown hidden"></div>
-  <div id="diag-secondaire-chips" class="cim10-chips"></div>
-</div>
-<div class="cim10-field">
-  <label>Diagnostic tertiaire</label>
-  <input type="text" id="diag-tertiaire-search" placeholder="Rechercher (code ou libellé)...">
-  <div id="diag-tertiaire-dropdown" class="cim10-dropdown hidden"></div>
-  <div id="diag-tertiaire-chips" class="cim10-chips"></div>
-</div>
-<div class="cim10-field">
-  <label>Antécédents médicaux <small style="font-weight:400; color:#7f8c8d;">(liés au patient, pas à cette visite)</small></label>
-  <input type="text" id="antecedent-med-search" placeholder="Rechercher (code ou libellé)...">
-  <div id="antecedent-med-dropdown" class="cim10-dropdown hidden"></div>
-  <div id="antecedent-med-chips" class="cim10-chips"></div>
-</div>
-<div class="cim10-field">
-  <label>Antécédents chirurgicaux <small style="font-weight:400; color:#7f8c8d;">(liés au patient, pas à cette visite)</small></label>
-  <input type="text" id="antecedent-chir-search" placeholder="Rechercher (code ou libellé)...">
-  <div id="antecedent-chir-dropdown" class="cim10-dropdown hidden"></div>
-  <div id="antecedent-chir-chips" class="cim10-chips"></div>
-</div>
+<div class="visit-block">
+        <h4>Diagnostics (CIM-10)</h4>
+        <div class="diag-grid">
+          <div class="cim10-field">
+            <label>Diagnostic suspecté</label>
+            <input type="text" id="diag-suspecte-search" placeholder="Rechercher (code ou libellé)...">
+            <div id="diag-suspecte-dropdown" class="cim10-dropdown hidden"></div>
+            <div id="diag-suspecte-chips" class="cim10-chips"></div>
+          </div>
+          <div class="cim10-field">
+            <label>Diagnostic confirmé</label>
+            <input type="text" id="diag-confirme-search" placeholder="Rechercher (code ou libellé)...">
+            <div id="diag-confirme-dropdown" class="cim10-dropdown hidden"></div>
+            <div id="diag-confirme-chips" class="cim10-chips"></div>
+          </div>
+          <div class="cim10-field">
+            <label>Diagnostic secondaire</label>
+            <input type="text" id="diag-secondaire-search" placeholder="Rechercher (code ou libellé)...">
+            <div id="diag-secondaire-dropdown" class="cim10-dropdown hidden"></div>
+            <div id="diag-secondaire-chips" class="cim10-chips"></div>
+          </div>
+          <div class="cim10-field">
+            <label>Diagnostic tertiaire</label>
+            <input type="text" id="diag-tertiaire-search" placeholder="Rechercher (code ou libellé)...">
+            <div id="diag-tertiaire-dropdown" class="cim10-dropdown hidden"></div>
+            <div id="diag-tertiaire-chips" class="cim10-chips"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="visit-block">
+        <h4>Antécédents</h4>
+        <div class="diag-grid">
+          <div class="cim10-field">
+            <label>Antécédents médicaux</label>
+            <input type="text" id="antecedent-med-search" placeholder="Rechercher (code ou libellé)...">
+            <div id="antecedent-med-dropdown" class="cim10-dropdown hidden"></div>
+            <div id="antecedent-med-chips" class="cim10-chips"></div>
+          </div>
+          <div class="cim10-field">
+            <label>Antécédents chirurgicaux</label>
+            <input type="text" id="antecedent-chir-search" placeholder="Rechercher (code ou libellé)...">
+            <div id="antecedent-chir-dropdown" class="cim10-dropdown hidden"></div>
+            <div id="antecedent-chir-chips" class="cim10-chips"></div>
+          </div>
+        </div>
+      </div>
 
       <div id="dynamic-fields-container" style="margin-top:16px;"></div>
 
