@@ -73,6 +73,16 @@
   .variable-flyout-left { left: 0; right: auto; }
   .variable-flyout-left #cr-variable-panel { border-radius: 0 8px 8px 0; border-left: none; border-right: 1px solid #dfe4ea; box-shadow: 4px 0 14px rgba(0,0,0,0.1); background: white; width: 260px; max-height: 78vh; overflow-y: auto; padding: 16px; }
   .variable-flyout-left #cr-var-score-fields > div { margin-bottom: 6px; }
+
+  .cim10-field { position: relative; margin-bottom: 14px; }
+.cim10-dropdown { position: absolute; background: white; border: 1px solid #ccc; border-radius: 6px; max-height: 220px; overflow-y: auto; z-index: 800; width: 100%; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+.cim10-dropdown-item { padding: 8px 10px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+.cim10-dropdown-item:hover { background: #eaf2f8; }
+.cim10-dropdown-empty { padding: 8px 10px; color: #7f8c8d; font-size: 13px; }
+.cim10-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cim10-chip { background: #eaf2f8; color: #2980b9; padding: 4px 8px; border-radius: 14px; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
+.cim10-chip span { cursor: pointer; font-weight: 700; }
+  
 </style>
 </head>
 <body>
@@ -248,6 +258,43 @@
         <option value="recherche">recherche</option>
       </select>
 
+      <div class="cim10-field">
+  <label>Diagnostic suspecté</label>
+  <input type="text" id="diag-suspecte-search" placeholder="Rechercher (code ou libellé)...">
+  <div id="diag-suspecte-dropdown" class="cim10-dropdown hidden"></div>
+  <div id="diag-suspecte-chips" class="cim10-chips"></div>
+</div>
+<div class="cim10-field">
+  <label>Diagnostic confirmé</label>
+  <input type="text" id="diag-confirme-search" placeholder="Rechercher (code ou libellé)...">
+  <div id="diag-confirme-dropdown" class="cim10-dropdown hidden"></div>
+  <div id="diag-confirme-chips" class="cim10-chips"></div>
+</div>
+<div class="cim10-field">
+  <label>Diagnostic secondaire</label>
+  <input type="text" id="diag-secondaire-search" placeholder="Rechercher (code ou libellé)...">
+  <div id="diag-secondaire-dropdown" class="cim10-dropdown hidden"></div>
+  <div id="diag-secondaire-chips" class="cim10-chips"></div>
+</div>
+<div class="cim10-field">
+  <label>Diagnostic tertiaire</label>
+  <input type="text" id="diag-tertiaire-search" placeholder="Rechercher (code ou libellé)...">
+  <div id="diag-tertiaire-dropdown" class="cim10-dropdown hidden"></div>
+  <div id="diag-tertiaire-chips" class="cim10-chips"></div>
+</div>
+<div class="cim10-field">
+  <label>Antécédents médicaux <small style="font-weight:400; color:#7f8c8d;">(liés au patient, pas à cette visite)</small></label>
+  <input type="text" id="antecedent-med-search" placeholder="Rechercher (code ou libellé)...">
+  <div id="antecedent-med-dropdown" class="cim10-dropdown hidden"></div>
+  <div id="antecedent-med-chips" class="cim10-chips"></div>
+</div>
+<div class="cim10-field">
+  <label>Antécédents chirurgicaux <small style="font-weight:400; color:#7f8c8d;">(liés au patient, pas à cette visite)</small></label>
+  <input type="text" id="antecedent-chir-search" placeholder="Rechercher (code ou libellé)...">
+  <div id="antecedent-chir-dropdown" class="cim10-dropdown hidden"></div>
+  <div id="antecedent-chir-chips" class="cim10-chips"></div>
+</div>
+
       <div id="dynamic-fields-container" style="margin-top:16px;"></div>
 
       <div class="actions-block">
@@ -370,7 +417,9 @@ let editingVisiteId = null;    // non-null => mode "modifier une visite existant
 let editingVisiteBaselineUpdatedAt = null; // valeur de visites.updated_at au moment de l'ouverture (filet de sécurité anti-écrasement)
 let pendingImportDefs = [];
 let pendingManualDefs = [];
-
+let CIM10_DATA = [];
+let cim10PickerValues = {};
+  
 const VISITE_TYPES = ["consultation", "HDJ", "HC", "HDS", "USINV", "UNV", "avis", "recherche"];
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -506,6 +555,21 @@ async function applySession(session) {
   document.getElementById('view-dashboard').classList.remove('hidden');
 }
 
+
+async function loadCim10Data() {
+  if (CIM10_DATA.length) return;
+  try {
+    const res = await fetch('./cim10.json');
+    CIM10_DATA = await res.json();
+  } catch (e) {
+    showError("Impossible de charger cim10.json (vérifiez qu'il est bien à côté du fichier HTML sur GitHub Pages).");
+  }
+}
+function cim10Label(code) {
+  const found = CIM10_DATA.find(e => e[0] === code);
+  return found ? found[1] : code; // repli sur le code brut si jamais introuvable
+}
+  
 function showAdminPanel() { document.getElementById('admin-panel').classList.toggle('hidden'); }
 
 // ==================================================================================
@@ -654,6 +718,13 @@ async function finalizeNewDatabase(fileHandle) {
       visite_date TEXT NOT NULL,
       visite_heure TEXT,
       visite_type TEXT CHECK (visite_type IS NULL OR visite_type IN ('consultation','HDJ','HC','HDS','USINV','UNV','avis','recherche')),
+      visite_type TEXT CHECK (visite_type IS NULL OR visite_type IN ('consultation','HDJ','HC','HDS','USINV','UNV','avis','recherche')),
+      diagnostic_suspecte TEXT,
+      diagnostic_confirme TEXT,
+      diagnostic_secondaire TEXT,
+      diagnostic_tertiaire TEXT,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE _schema_defs (
@@ -673,6 +744,12 @@ async function finalizeNewDatabase(fileHandle) {
       test_names TEXT NOT NULL,
       created_by TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+      CREATE TABLE _patient_antecedents (
+      demog_IPP TEXT PRIMARY KEY,
+      antecedent_med TEXT,
+      antecedent_chir TEXT,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -1305,6 +1382,42 @@ function renderCrTemplatesLibrary() {
   zone.innerHTML = html;
 }
 
+// ----- CIM 10 -----
+
+function initCim10Picker(widgetId, initialCodes) {
+  cim10PickerValues[widgetId] = initialCodes ? [...initialCodes] : [];
+  const input = document.getElementById(widgetId + '-search');
+  input.value = '';
+  input.oninput = () => cim10Search(widgetId, input.value);
+  input.onblur = () => setTimeout(() => document.getElementById(widgetId + '-dropdown').classList.add('hidden'), 150);
+  renderCim10Chips(widgetId);
+}
+function cim10Search(widgetId, query) {
+  const dropdown = document.getElementById(widgetId + '-dropdown');
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) { dropdown.classList.add('hidden'); return; }
+  const matches = CIM10_DATA.filter(e => e[0].toLowerCase().includes(q) || e[1].toLowerCase().includes(q)).slice(0, 15);
+  dropdown.innerHTML = matches.length
+    ? matches.map(([code, label]) => `<div class="cim10-dropdown-item" onclick="cim10Select('${widgetId}','${code}')"><strong>${code}</strong> — ${escapeHtml(label)}</div>`).join('')
+    : '<div class="cim10-dropdown-empty">Aucun résultat</div>';
+  dropdown.classList.remove('hidden');
+}
+function cim10Select(widgetId, code) {
+  if (!cim10PickerValues[widgetId].includes(code)) cim10PickerValues[widgetId].push(code);
+  document.getElementById(widgetId + '-search').value = '';
+  document.getElementById(widgetId + '-dropdown').classList.add('hidden');
+  renderCim10Chips(widgetId);
+}
+function cim10Remove(widgetId, code) {
+  cim10PickerValues[widgetId] = cim10PickerValues[widgetId].filter(c => c !== code);
+  renderCim10Chips(widgetId);
+}
+function renderCim10Chips(widgetId) {
+  document.getElementById(widgetId + '-chips').innerHTML = cim10PickerValues[widgetId].map(code =>
+    `<span class="cim10-chip">${code} — ${escapeHtml(cim10Label(code))} <span onclick="cim10Remove('${widgetId}','${code}')">✕</span></span>`
+  ).join('');
+}
+  
 // ---- Éditeur ----
 function openCrTemplateEditor(templateId) {
   const t = templateId ? crTemplatesCache.find(x => x.id === templateId) : null;
@@ -1575,6 +1688,17 @@ function addColumnToTable(db, tableName, colName, colType, min, max, options) {
 function tableExists(db, tableName) {
   const rows = dbSelect(db, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [tableName]);
   return rows.length > 0;
+  ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire'].forEach(col => {
+      if (!columnExists(freshDb, 'visites', col)) freshDb.run(`ALTER TABLE visites ADD COLUMN "${col}" TEXT;`);
+    });
+    if (!tableExists(freshDb, '_patient_antecedents')) {
+      freshDb.run(`CREATE TABLE _patient_antecedents (
+        demog_IPP TEXT PRIMARY KEY,
+        antecedent_med TEXT,
+        antecedent_chir TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );`);
+    }
 }
 function ensureProtocolesTable(db) {
   db.run(`CREATE TABLE IF NOT EXISTS _protocoles (
@@ -1594,10 +1718,13 @@ function loadProtocoles(db) {
 // Migration légère : ajoute visite_heure / visite_type / table _protocoles si absentes
 // (bases créées avant leur introduction).
 async function ensureSchemaMigrations() {
+  const missingDiag = !columnExists(dbInstance, 'visites', 'diagnostic_suspecte');
+const missingAntecedents = !tableExists(dbInstance, '_patient_antecedents');
+
   const missingHeure = !columnExists(dbInstance, 'visites', 'visite_heure');
   const missingType = !columnExists(dbInstance, 'visites', 'visite_type');
   const missingProtocoles = !tableExists(dbInstance, '_protocoles');
-  if (!missingHeure && !missingType && !missingProtocoles) return;
+  if (!missingHeure && !missingType && !missingProtocoles && !missingDiag && !missingAntecedents) return;
 
   await acquireLock(currentDbName);
   try {
@@ -1828,6 +1955,7 @@ function searchByIpp() {
 
 async function loadVisitForEdit(visiteId) {
   const rows = dbSelect(dbInstance, `SELECT * FROM visites WHERE id = ?`, [visiteId]);
+  await loadCim10Data();
   if (!rows.length) { showError("Visite introuvable."); return; }
   const v = rows[0];
 
@@ -1874,6 +2002,7 @@ async function loadVisitForEdit(visiteId) {
 // ==================================================================================
 // Démarre une NOUVELLE visite (bouton menu principal) : réinitialise tout l'état d'édition.
 function startNewVisit() {
+  await loadCim10Data();
   editingVisiteId = null;
   editingVisiteBaselineUpdatedAt = null;
   openPanel('panel-new-visit');
