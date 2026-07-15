@@ -719,7 +719,6 @@ async function finalizeNewDatabase(fileHandle) {
       visite_date TEXT NOT NULL,
       visite_heure TEXT,
       visite_type TEXT CHECK (visite_type IS NULL OR visite_type IN ('consultation','HDJ','HC','HDS','USINV','UNV','avis','recherche')),
-      visite_type TEXT CHECK (visite_type IS NULL OR visite_type IN ('consultation','HDJ','HC','HDS','USINV','UNV','avis','recherche')),
       diagnostic_suspecte TEXT,
       diagnostic_confirme TEXT,
       diagnostic_secondaire TEXT,
