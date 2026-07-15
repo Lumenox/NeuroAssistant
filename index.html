@@ -429,9 +429,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (savedHandle) {
       document.getElementById('btn-resume-db').textContent = `⏪ Reprendre "${savedHandle.name}"`;
       document.getElementById('resume-db-zone').classList.remove('hidden');
-      document.getElementById('input-ipp').addEventListener('blur', prefillAntecedentsForCurrentIpp);
+      
     }
   } catch (e) { /* IndexedDB indisponible : tant pis, pas bloquant */ }
+  document.getElementById('input-ipp').addEventListener('blur', prefillAntecedentsForCurrentIpp);
 });
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -1686,17 +1687,6 @@ function addColumnToTable(db, tableName, colName, colType, min, max, options) {
 function tableExists(db, tableName) {
   const rows = dbSelect(db, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [tableName]);
   return rows.length > 0;
-  ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire'].forEach(col => {
-      if (!columnExists(freshDb, 'visites', col)) freshDb.run(`ALTER TABLE visites ADD COLUMN "${col}" TEXT;`);
-    });
-    if (!tableExists(freshDb, '_patient_antecedents')) {
-      freshDb.run(`CREATE TABLE _patient_antecedents (
-        demog_IPP TEXT PRIMARY KEY,
-        antecedent_med TEXT,
-        antecedent_chir TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );`);
-    }
 }
 function ensureProtocolesTable(db) {
   db.run(`CREATE TABLE IF NOT EXISTS _protocoles (
@@ -1733,6 +1723,17 @@ const missingAntecedents = !tableExists(dbInstance, '_patient_antecedents');
     if (!columnExists(freshDb, 'visites', 'visite_type')) {
       const list = VISITE_TYPES.map(t => `'${t}'`).join(',');
       freshDb.run(`ALTER TABLE visites ADD COLUMN visite_type TEXT CHECK(visite_type IS NULL OR visite_type IN (${list}));`);
+    }
+    ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire'].forEach(col => {
+      if (!columnExists(freshDb, 'visites', col)) freshDb.run(`ALTER TABLE visites ADD COLUMN "${col}" TEXT;`);
+    });
+    if (!tableExists(freshDb, '_patient_antecedents')) {
+      freshDb.run(`CREATE TABLE _patient_antecedents (
+        demog_IPP TEXT PRIMARY KEY,
+        antecedent_med TEXT,
+        antecedent_chir TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );`);
     }
     ensureProtocolesTable(freshDb);
     await writeDbFile(freshDb);
@@ -2160,7 +2161,7 @@ const diagTer = JSON.stringify(cim10PickerValues['diag-tertiaire'] || []);
 
   if (editingVisiteId) {
     freshDb.run(`UPDATE visites SET demog_IPP=?, visite_date=?, visite_heure=?, visite_type=?, diagnostic_suspecte=?, diagnostic_confirme=?, diagnostic_secondaire=?, diagnostic_tertiaire=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-      [ipp, dateVisite, heure, type, editingVisiteId]);
+      [ipp, dateVisite, heure, type, diagS, diagC, diagSec, diagTer, editingVisiteId]);
     return editingVisiteId;
   }
 
@@ -2175,7 +2176,7 @@ const diagTer = JSON.stringify(cim10PickerValues['diag-tertiaire'] || []);
 
   editingVisiteId = crypto.randomUUID();
   freshDb.run(`INSERT INTO visites (id, demog_IPP, demog_neuro, visite_date, visite_heure, visite_type, diagnostic_suspecte, diagnostic_confirme, diagnostic_secondaire, diagnostic_tertiaire) VALUES (?,?,?,?,?,?, ?, ?, ?, ?)`,
-    [editingVisiteId, ipp, userInitials, dateVisite, heure, type]);
+    [editingVisiteId, ipp, userInitials, dateVisite, heure, type, diagS, diagC, diagSec, diagTer]);
   return editingVisiteId;
 }
 
@@ -2274,8 +2275,10 @@ async function commitVisit({ finalize, onlyTable, keepOpen }) {
   document.getElementById('btn-generate-cr').disabled = false; // une section sauvegardée => la visite existe déjà
   showSuccess(`Section "${onlyTable}" enregistrée (${new Date().toLocaleTimeString()}). La fiche reste ouverte.`);
 }
+return true;
   } catch (err) {
     showError("Erreur lors de l'enregistrement : " + err.message);
+    return false;
   } finally {
     await releaseLock(currentDbName);
   }
