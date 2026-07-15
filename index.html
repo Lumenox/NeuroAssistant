@@ -2001,7 +2001,7 @@ async function loadVisitForEdit(visiteId) {
 // 4c/4d) FORMULAIRE DE VISITE - rendu dynamique du schéma + sauvegarde verrouillée
 // ==================================================================================
 // Démarre une NOUVELLE visite (bouton menu principal) : réinitialise tout l'état d'édition.
-function startNewVisit() {
+async function startNewVisit() {
   await loadCim10Data();
   editingVisiteId = null;
   editingVisiteBaselineUpdatedAt = null;
