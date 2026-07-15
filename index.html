@@ -698,7 +698,7 @@ async function createDatabaseAndSaveFile() {
     // showSaveFilePicker accorde en principe déjà readwrite nativement (contrairement à
     // showOpenFilePicker), donc pas besoin du mécanisme de bouton dédié ici en théorie.
     // On vérifie quand même l'état sans forcer de requestPermission bloquant.
-    await finalizeNewDatabase(fileHandle);
+    await (fileHandle);
   } catch (err) {
     if (err.name === 'AbortError') return;
     showError(err.message);
@@ -724,6 +724,9 @@ async function finalizeNewDatabase(fileHandle) {
       diagnostic_confirme TEXT,
       diagnostic_secondaire TEXT,
       diagnostic_tertiaire TEXT,
+      diagnostic_tertiaire TEXT,
+      antecedent_med TEXT,
+      antecedent_chir TEXT,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE _schema_defs (
@@ -1659,9 +1662,11 @@ function collectCurrentVisiteData() {
   try { codes = JSON.parse(v[col] || '[]'); } catch (e) {}
   values[col] = codes.map(c => cim10Label(c)).join('; ');
 });
-const anteRows = dbSelect(dbInstance, `SELECT antecedent_med, antecedent_chir FROM _patient_antecedents WHERE demog_IPP=?`, [v.demog_IPP]);
-values['antecedent_med'] = anteRows.length ? JSON.parse(anteRows[0].antecedent_med || '[]').map(c => cim10Label(c)).join('; ') : '';
-values['antecedent_chir'] = anteRows.length ? JSON.parse(anteRows[0].antecedent_chir || '[]').map(c => cim10Label(c)).join('; ') : '';
+['antecedent_med','antecedent_chir'].forEach(col => {
+  let codes = [];
+  try { codes = JSON.parse(v[col] || '[]'); } catch (e) {}
+  values[col] = codes.map(c => cim10Label(c)).join('; ');
+});
   
   return values;
 }
@@ -1762,11 +1767,11 @@ function loadProtocoles(db) {
 async function ensureSchemaMigrations() {
   const missingDiag = !columnExists(dbInstance, 'visites', 'diagnostic_suspecte');
 const missingAntecedents = !tableExists(dbInstance, '_patient_antecedents');
-
+  const missingAnteCols = !columnExists(dbInstance, 'visites', 'antecedent_med');
   const missingHeure = !columnExists(dbInstance, 'visites', 'visite_heure');
   const missingType = !columnExists(dbInstance, 'visites', 'visite_type');
   const missingProtocoles = !tableExists(dbInstance, '_protocoles');
-  if (!missingHeure && !missingType && !missingProtocoles && !missingDiag && !missingAntecedents) return;
+  if (!missingHeure && !missingType && !missingProtocoles && !missingDiag && !missingAntecedents && !missingAnteCols) return;
 
   await acquireLock(currentDbName);
   try {
@@ -1781,6 +1786,9 @@ const missingAntecedents = !tableExists(dbInstance, '_patient_antecedents');
     ['diagnostic_suspecte','diagnostic_confirme','diagnostic_secondaire','diagnostic_tertiaire'].forEach(col => {
       if (!columnExists(freshDb, 'visites', col)) freshDb.run(`ALTER TABLE visites ADD COLUMN "${col}" TEXT;`);
     });
+    ['antecedent_med','antecedent_chir'].forEach(col => {
+      if (!columnExists(freshDb, 'visites', col)) freshDb.run(`ALTER TABLE visites ADD COLUMN "${col}" TEXT;`);
+    });
     if (!tableExists(freshDb, '_patient_antecedents')) {
       freshDb.run(`CREATE TABLE _patient_antecedents (
         demog_IPP TEXT PRIMARY KEY,
@@ -1789,7 +1797,9 @@ const missingAntecedents = !tableExists(dbInstance, '_patient_antecedents');
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );`);
     }
+    
     ensureProtocolesTable(freshDb);
+    
     await writeDbFile(freshDb);
     dbInstance = freshDb;
   } finally {
@@ -2043,7 +2053,10 @@ async function loadVisitForEdit(visiteId) {
   try { codes = JSON.parse(v[col] || '[]'); } catch (e) {}
   initCim10Picker(id, codes);
 });
-prefillAntecedentsForCurrentIpp(); // voir ci-dessous, réutilisé aussi au blur de l'IPP
+let anteMed = []; try { anteMed = JSON.parse(v.antecedent_med || '[]'); } catch (e) {}
+let anteChir = []; try { anteChir = JSON.parse(v.antecedent_chir || '[]'); } catch (e) {}
+initCim10Picker('antecedent-med', anteMed);
+initCim10Picker('antecedent-chir', anteChir);
   
   // pré-remplissage des champs dynamiques depuis chaque table de test
   const byTable = {};
@@ -2147,9 +2160,12 @@ function renderVisitForm() {
 }
 
 function prefillAntecedentsForCurrentIpp() {
+  if (editingVisiteId) return; // en modification d'une visite existante, on ne touche pas à ses antécédents propres
   const ipp = document.getElementById('input-ipp').value.trim();
   if (ipp.length !== 10 || isNaN(ipp) || !dbInstance) { initCim10Picker('antecedent-med', []); initCim10Picker('antecedent-chir', []); return; }
-  const rows = dbSelect(dbInstance, `SELECT antecedent_med, antecedent_chir FROM _patient_antecedents WHERE demog_IPP=?`, [ipp]);
+  const rows = dbSelect(dbInstance,
+    `SELECT antecedent_med, antecedent_chir FROM visites WHERE demog_IPP=? ORDER BY visite_date DESC, visite_heure DESC LIMIT 1`,
+    [ipp]);
   const med = rows.length ? JSON.parse(rows[0].antecedent_med || '[]') : [];
   const chir = rows.length ? JSON.parse(rows[0].antecedent_chir || '[]') : [];
   initCim10Picker('antecedent-med', med);
@@ -2205,17 +2221,19 @@ function upsertVisitesHeader(freshDb) {
   const heure = document.getElementById('input-heure').value;
   const type = document.getElementById('input-type').value;
   const diagS = JSON.stringify(cim10PickerValues['diag-suspecte'] || []);
-const diagC = JSON.stringify(cim10PickerValues['diag-confirme'] || []);
-const diagSec = JSON.stringify(cim10PickerValues['diag-secondaire'] || []);
-const diagTer = JSON.stringify(cim10PickerValues['diag-tertiaire'] || []);
+  const diagC = JSON.stringify(cim10PickerValues['diag-confirme'] || []);
+  const diagSec = JSON.stringify(cim10PickerValues['diag-secondaire'] || []);
+  const diagTer = JSON.stringify(cim10PickerValues['diag-tertiaire'] || []);
+  const anteMed = JSON.stringify(cim10PickerValues['antecedent-med'] || []);
+  const anteChir = JSON.stringify(cim10PickerValues['antecedent-chir'] || []);
   
   if (ipp.length !== 10 || isNaN(ipp)) throw new Error("L'IPP doit contenir exactement 10 chiffres.");
   if (!dateVisite) throw new Error("La date de visite est obligatoire.");
   if (!type) throw new Error("Le type de visite est obligatoire.");
 
   if (editingVisiteId) {
-    freshDb.run(`UPDATE visites SET demog_IPP=?, visite_date=?, visite_heure=?, visite_type=?, diagnostic_suspecte=?, diagnostic_confirme=?, diagnostic_secondaire=?, diagnostic_tertiaire=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-      [ipp, dateVisite, heure, type, diagS, diagC, diagSec, diagTer, editingVisiteId]);
+    freshDb.run(`UPDATE visites SET demog_IPP=?, visite_date=?, visite_heure=?, visite_type=?, diagnostic_suspecte=?, diagnostic_confirme=?, diagnostic_secondaire=?, diagnostic_tertiaire=?, antecedent_med=?, antecedent_chir=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+      [ipp, dateVisite, heure, type, diagS, diagC, diagSec, diagTer, anteMed, anteChir, editingVisiteId]);
     return editingVisiteId;
   }
 
@@ -2229,8 +2247,8 @@ const diagTer = JSON.stringify(cim10PickerValues['diag-tertiaire'] || []);
   }
 
   editingVisiteId = crypto.randomUUID();
-  freshDb.run(`INSERT INTO visites (id, demog_IPP, demog_neuro, visite_date, visite_heure, visite_type, diagnostic_suspecte, diagnostic_confirme, diagnostic_secondaire, diagnostic_tertiaire) VALUES (?,?,?,?,?,?, ?, ?, ?, ?)`,
-    [editingVisiteId, ipp, userInitials, dateVisite, heure, type, diagS, diagC, diagSec, diagTer]);
+  freshDb.run(`INSERT INTO visites (id, demog_IPP, demog_neuro, visite_date, visite_heure, visite_type, diagnostic_suspecte, diagnostic_confirme, diagnostic_secondaire, diagnostic_tertiaire, antecedent_med, antecedent_chir) VALUES (?, ?, ?,?,?,?,?,?, ?, ?, ?, ?)`,
+    [editingVisiteId, ipp, userInitials, dateVisite, heure, type, diagS, diagC, diagSec, diagTer, anteMed, anteChir]);
   return editingVisiteId;
 }
 
@@ -2290,7 +2308,7 @@ async function commitVisit({ finalize, onlyTable, keepOpen }) {
 
     const isNewVisit = !editingVisiteId;
     const visiteId = upsertVisitesHeader(freshDb); // peut lever une exception (validation / doublon annulé)
-    upsertPatientAntecedents(freshDb, document.getElementById('input-ipp').value.trim());
+
     
     if (isNewVisit) {
       const lockResult = await acquireVisitLock(visiteId);
