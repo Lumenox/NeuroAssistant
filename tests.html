@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Tests core.js</title>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; max-width: 860px; margin: 30px auto; padding: 0 16px; color: #2c3e50; }
+  h1 { font-size: 20px; }
+  #summary { font-weight: 700; padding: 10px 14px; border-radius: 6px; margin: 14px 0; background: #eaf2f8; }
+  #summary.ok { background: #e8f8f0; color: #1e8449; }
+  #summary.ko { background: #fde8e7; color: #c0392b; }
+  .row { padding: 5px 10px; border-left: 4px solid #ccc; margin: 3px 0; font-size: 14px; }
+  .row.pass { border-color: #27ae60; background: #f4fbf7; }
+  .row.fail { border-color: #e74c3c; background: #fdf1f0; }
+  .row .msg { color: #c0392b; display: block; font-family: monospace; font-size: 12.5px; white-space: pre-wrap; }
+  h2 { font-size: 15px; margin: 22px 0 6px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 0.03em; }
+</style>
+</head>
+<body>
+<h1>Tests de core.js (couche stockage et chiffrement)</h1>
+<div id="summary">Exécution…</div>
+<div id="results"></div>
+
+<script src="core.js"></script>
+<script>
+// ===================== mini-harnais =====================
+const _tests = [];
+let _section = '';
+function section(titre) { _tests.push({ section: titre }); }
+function test(nom, fn) { _tests.push({ nom, fn }); }
+
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion fausse'); }
+function assertEq(a, b, msg) {
+  const sa = JSON.stringify(a), sb = JSON.stringify(b);
+  if (sa !== sb) throw new Error((msg ? msg + ' : ' : '') + 'attendu ' + sb + ', obtenu ' + sa);
+}
+// Vérifie qu'une promesse échoue avec un NVError du code donné.
+async function expectCode(promesse, code) {
+  try { await promesse; }
+  catch (e) {
+    if (!(e instanceof NVCore.NVError)) throw new Error("erreur non convertie en NVError : " + (e && e.name) + ' ' + (e && e.message));
+    if (e.code !== code) throw new Error('code attendu ' + code + ', obtenu ' + e.code);
+    return;
+  }
+  throw new Error("aucune erreur levée (attendu " + code + ")");
+}
+function same(a, b) { return a.length === b.length && a.every((x, i) => x === b[i]); }
+function flip(bytes, idx) { const c = bytes.slice(); c[idx] ^= 0xff; return c; }
+function setByte(bytes, idx, val) { const c = bytes.slice(); c[idx] = val; return c; }
+function shuffled(arr, seed) {
+  const a = arr.slice(); let s = seed;
+  for (let i = a.length - 1; i > 0; i--) {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    const j = s % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const D = new Date(Date.UTC(2026, 9, 27, 22, 3, 0));
+const name = (v, a, alea) => NVCore.buildFileName({ version: v, auteur: a || 'RM', date: D, alea: alea || 'a1b2c3' });
+const SAMPLE = {
+  visite_id: 'v-1', episode_id: 'e-1', ipp: '9912345678', version: 1, parent_version: null,
+  auteur: 'RM', date_saisie: '2026-10-27T22:03:00Z', statut: 'actif',
+  items: { 'mmse.orientation.annee': 1, 'texte.libre': 'très ça va' }
+};
+
+// ===================== tests : chiffrement =====================
+section('Chiffrement');
+
+test('1. Aller-retour : l\'objet récupéré est identique', async () => {
+  const key = await NVCore.generateDataKey();
+  const enc = await NVCore.encryptVersion(SAMPLE, key, 7);
+  const dec = await NVCore.decryptVersion(enc, key);
+  assertEq(dec.obj, SAMPLE);
+  assertEq(dec.keyId, 7, 'key_id');
+  assertEq(dec.formatVersion, 1, 'format_version');
+});
+
+test('2a. Aller-retour : accents, emojis, guillemets', async () => {
+  const key = await NVCore.generateDataKey();
+  const obj = { items: { a: 'é à ç œ « » " \' \\ \n 😀 日本語' } };
+  const dec = await NVCore.decryptVersion(await NVCore.encryptVersion(obj, key, 1), key);
+  assertEq(dec.obj, obj);
+});
+test('2b. Aller-retour : items vide', async () => {
+  const key = await NVCore.generateDataKey();
+  const obj = { items: {} };
+  const dec = await NVCore.decryptVersion(await NVCore.encryptVersion(obj, key, 1), key);
+  assertEq(dec.obj, obj);
+});
+test('2c. Aller-retour : objet d\'environ 100 ko', async () => {
+  const key = await NVCore.generateDataKey();
+  const obj = { items: { gros: 'x'.repeat(100000) } };
+  const dec = await NVCore.decryptVersion(await NVCore.encryptVersion(obj, key, 1), key);
+  assertEq(dec.obj.items.gros.length, 100000);
+});
+
+test('3. Deux chiffrements du même objet donnent des octets différents (IV distincts)', async () => {
+  const key = await NVCore.generateDataKey();
+  const a = await NVCore.encryptVersion(SAMPLE, key, 1);
+  const b = await NVCore.encryptVersion(SAMPLE, key, 1);
+  assert(!same(a, b), 'octets identiques');
+  assert(!same(a.slice(7, 19), b.slice(7, 19)), 'IV identiques');
+});
+
+test('4. Mauvaise clé → AUTH_FAILED', async () => {
+  const k1 = await NVCore.generateDataKey();
+  const k2 = await NVCore.generateDataKey();
+  const enc = await NVCore.encryptVersion(SAMPLE, k1, 1);
+  await expectCode(NVCore.decryptVersion(enc, k2), 'AUTH_FAILED');
+});
+
+test('5. Export/import de la clé en base64 : l\'ancien fichier se déchiffre', async () => {
+  const key = await NVCore.generateDataKey();
+  const enc = await NVCore.encryptVersion(SAMPLE, key, 1);
+  const b64 = await NVCore.exportKeyBase64(key);
+  const key2 = await NVCore.importKeyBase64(b64);
+  const dec = await NVCore.decryptVersion(enc, key2);
+  assertEq(dec.obj, SAMPLE);
+});
+
+test('5b. key_id hors plage refusé à l\'écriture', async () => {
+  const key = await NVCore.generateDataKey();
+  await expectCode(NVCore.encryptVersion(SAMPLE, key, 70000), 'BAD_INPUT');
+  await expectCode(NVCore.encryptVersion(SAMPLE, key, -1), 'BAD_INPUT');
+});
+
+// ===================== tests : altération =====================
+section('Altération (sur un fichier valide)');
+
+async function fichierValide() {
+  const key = await NVCore.generateDataKey();
+  const obj = { items: { texte: 'a'.repeat(200) } };   // assez long pour les troncatures
+  const enc = await NVCore.encryptVersion(obj, key, 3);
+  return { key, enc };
+}
+
+test('6. Fichier vide → TRUNCATED', async () => {
+  const { key } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(new Uint8Array(0), key), 'TRUNCATED');
+});
+test('7. Fichier de 20 octets → TRUNCATED', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(enc.slice(0, 20), key), 'TRUNCATED');
+});
+test('8. Fichier valide tronqué de 10 octets en fin → AUTH_FAILED', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(enc.slice(0, enc.length - 10), key), 'AUTH_FAILED');
+});
+test('9a. Octet du magic modifié → BAD_MAGIC', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(flip(enc, 0), key), 'BAD_MAGIC');
+  await expectCode(NVCore.decryptVersion(flip(enc, 3), key), 'BAD_MAGIC');
+});
+test('9b. format_version inconnue → UNSUPPORTED_VERSION', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(setByte(enc, 4, 99), key), 'UNSUPPORTED_VERSION');
+  await expectCode(NVCore.decryptVersion(setByte(enc, 4, 0), key), 'UNSUPPORTED_VERSION');
+});
+test('9c. key_id modifié → AUTH_FAILED', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(flip(enc, 5), key), 'AUTH_FAILED');
+  await expectCode(NVCore.decryptVersion(flip(enc, 6), key), 'AUTH_FAILED');
+});
+test('9d. IV modifié → AUTH_FAILED', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(flip(enc, 7), key), 'AUTH_FAILED');
+  await expectCode(NVCore.decryptVersion(flip(enc, 18), key), 'AUTH_FAILED');
+});
+test('9e. Milieu du contenu modifié → AUTH_FAILED', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(flip(enc, 19 + 50), key), 'AUTH_FAILED');
+});
+test('9f. Dernier octet (tag) modifié → AUTH_FAILED', async () => {
+  const { key, enc } = await fichierValide();
+  await expectCode(NVCore.decryptVersion(flip(enc, enc.length - 1), key), 'AUTH_FAILED');
+});
+test('10. key_id modifié détecté : prouve que l\'AAD fonctionne', async () => {
+  const { key, enc } = await fichierValide();
+  const dec = await NVCore.decryptVersion(enc, key);
+  assertEq(dec.keyId, 3, 'key_id d\'origine');
+  // On change key_id 3 -> 4 : seul l'en-tête diffère, le contenu chiffré est intact.
+  await expectCode(NVCore.decryptVersion(setByte(enc, 6, 4), key), 'AUTH_FAILED');
+});
+test('10b. Entrée de mauvais type → BAD_INPUT', async () => {
+  const { key } = await fichierValide();
+  await expectCode(NVCore.decryptVersion('pas des octets', key), 'BAD_INPUT');
+});
+
+// ===================== tests : noms et versions =====================
+section('Noms et versions');
+
+test('11. buildFileName puis parseFileName redonnent les mêmes valeurs', () => {
+  const n = name(7, 'RM', 'a1b2c3');
+  assertEq(n, 'v0007_RM_20261027T220300Z_a1b2c3.enc');
+  const p = NVCore.parseFileName(n);
+  assertEq(p.version, 7);
+  assertEq(p.auteur, 'RM');
+  assertEq(p.dateStr, '20261027T220300Z');
+  assertEq(p.alea, 'a1b2c3');
+  assertEq(p.date.getTime(), D.getTime());
+});
+test('11b. Alea généré automatiquement et différent d\'un appel à l\'autre', () => {
+  const a = NVCore.buildFileName({ version: 1, auteur: 'RM', date: D });
+  const b = NVCore.buildFileName({ version: 1, auteur: 'RM', date: D });
+  assert(NVCore.parseFileName(a) && NVCore.parseFileName(b), 'noms invalides');
+  assert(a !== b, 'deux alea identiques (très improbable : 1 chance sur 16 millions)');
+});
+test('11c. buildFileName refuse les entrées invalides', () => {
+  const bad = [
+    { version: 0, auteur: 'RM', date: D },
+    { version: 10000, auteur: 'RM', date: D },
+    { version: 1, auteur: 'rm', date: D },
+    { version: 1, auteur: 'R M', date: D },
+    { version: 1, auteur: '', date: D },
+    { version: 1, auteur: 'RM', date: new Date('nope') },
+    { version: 1, auteur: 'RM', date: D, alea: 'ZZZZZZ' }
+  ];
+  bad.forEach((args, i) => {
+    let threw = false;
+    try { NVCore.buildFileName(args); } catch (e) { threw = e instanceof NVCore.NVError; }
+    assert(threw, 'entrée invalide n° ' + i + ' acceptée');
+  });
+});
+test('12. parseFileName renvoie null pour les noms non conformes', () => {
+  const rejets = [
+    'Thumbs.db', 'desktop.ini', '~$v0001.enc',
+    'v7_AB_x.enc',
+    'v0007_ab_20261027T220300Z_a1b2c3.enc',          // auteur en minuscules
+    'v0007_AB_20261027T220300Z_a1b2c3.enc.tmp',
+    'v0007_AB_20261027T220300Z_a1b2c3 (copie).enc',
+    'v0007_AB_20261327T220300Z_a1b2c3.enc',          // mois 13
+    'v0007_AB_20260231T220300Z_a1b2c3.enc',          // 31 février
+    'v0000_AB_20261027T220300Z_a1b2c3.enc',          // version 0
+    'v0007_AB_20261027T220300Z_A1B2C3.enc',          // alea en majuscules
+    ''
+  ];
+  rejets.forEach(n => assertEq(NVCore.parseFileName(n), null, JSON.stringify(n)));
+  assertEq(NVCore.parseFileName(undefined), null, 'undefined');
+});
+test('13. Versions mélangées : courante = v0003, quel que soit l\'ordre', () => {
+  const liste = [name(3, 'AB', 'aaaaaa'), name(1, 'AB', 'bbbbbb'), name(2, 'CD', 'cccccc')];
+  for (let seed = 1; seed <= 8; seed++) {
+    const r = NVCore.resolveVersions(shuffled(liste, seed));
+    assertEq(r.courante, name(3, 'AB', 'aaaaaa'), 'seed ' + seed);
+    assertEq(r.bifurcations, []);
+    assertEq(r.lacunes, []);
+  }
+});
+test('14. Deux fichiers v0004 : courante = null et bifurcation signalée', () => {
+  const a = name(4, 'AB', 'aaaaaa'), b = name(4, 'CD', 'bbbbbb');
+  const r = NVCore.resolveVersions([name(1), name(2, 'AB', 'dddddd'), name(3, 'AB', 'eeeeee'), b, a]);
+  assertEq(r.courante, null);
+  assertEq(r.bifurcations, [{ version: 4, fichiers: [a, b].sort() }]);
+});
+test('15. Deux v0002 alors que v0003 existe : courante = v0003, bifurcation au niveau 2', () => {
+  const a = name(2, 'AB', 'aaaaaa'), b = name(2, 'CD', 'bbbbbb');
+  const v3 = name(3, 'AB', 'cccccc');
+  const r = NVCore.resolveVersions([a, v3, name(1), b]);
+  assertEq(r.courante, v3);
+  assertEq(r.bifurcations, [{ version: 2, fichiers: [a, b].sort() }]);
+});
+test('16. Liste vide : courante = null, pas d\'exception', () => {
+  const r = NVCore.resolveVersions([]);
+  assertEq(r.courante, null);
+  assertEq(r.bifurcations, []);
+  assertEq(r.ignores, []);
+  assertEq(NVCore.resolveVersions(undefined).courante, null, 'undefined');
+});
+test('17. Fichiers parasites : dans ignores, sans effet sur le reste', () => {
+  const v1 = name(1), v2 = name(2, 'AB', 'dddddd');
+  const r = NVCore.resolveVersions(['Thumbs.db', v1, name(2) + '.tmp', v2, 'desktop.ini']);
+  assertEq(r.courante, v2);
+  assertEq(r.ignores, ['Thumbs.db', name(2) + '.tmp', 'desktop.ini'].sort());
+  assertEq(r.bifurcations, []);
+});
+test('17b. Lacune de numérotation signalée (sans être une erreur)', () => {
+  const r = NVCore.resolveVersions([name(1), name(3, 'AB', 'dddddd')]);
+  assertEq(r.courante, name(3, 'AB', 'dddddd'));
+  assertEq(r.lacunes, [2]);
+});
+test('17c. Le même nom présent deux fois dans la liste n\'est pas une bifurcation', () => {
+  const r = NVCore.resolveVersions([name(1), name(1)]);
+  assertEq(r.courante, name(1));
+  assertEq(r.bifurcations, []);
+});
+
+// ===================== exécution et affichage =====================
+async function runAll() {
+  const resultsEl = typeof document !== 'undefined' ? document.getElementById('results') : null;
+  const summaryEl = typeof document !== 'undefined' ? document.getElementById('summary') : null;
+  let pass = 0, fail = 0;
+
+  function show(cls, texte, msg) {
+    if (resultsEl) {
+      const row = document.createElement('div');
+      row.className = 'row ' + cls;
+      row.textContent = (cls === 'pass' ? '✅ ' : '❌ ') + texte;
+      if (msg) { const m = document.createElement('span'); m.className = 'msg'; m.textContent = msg; row.appendChild(m); }
+      resultsEl.appendChild(row);
+    } else {
+      console.log((cls === 'pass' ? 'PASS ' : 'FAIL ') + texte + (msg ? '\n     ' + msg : ''));
+    }
+  }
+
+  if (!(globalThis.crypto && globalThis.crypto.subtle)) {
+    const m = "WebCrypto indisponible : ouvrez la page dans Chrome ou Edge (https ou fichier local).";
+    if (summaryEl) { summaryEl.textContent = m; summaryEl.className = 'ko'; } else console.log(m);
+    return { pass: 0, fail: 1 };
+  }
+
+  for (const t of _tests) {
+    if (t.section) {
+      if (resultsEl) { const h = document.createElement('h2'); h.textContent = t.section; resultsEl.appendChild(h); }
+      else console.log('\n== ' + t.section);
+      continue;
+    }
+    try { await t.fn(); pass++; show('pass', t.nom); }
+    catch (e) { fail++; show('fail', t.nom, e && e.message ? e.message : String(e)); }
+  }
+
+  const texte = fail === 0
+    ? 'TOUS LES TESTS PASSENT (' + pass + '/' + (pass + fail) + ')'
+    : fail + ' ÉCHEC(S) sur ' + (pass + fail) + ' tests';
+  if (summaryEl) { summaryEl.textContent = texte; summaryEl.className = fail === 0 ? 'ok' : 'ko'; }
+  else console.log('\n' + texte);
+  return { pass, fail };
+}
+// Ne rien exécuter automatiquement hors navigateur (permet de lancer sous Node).
+if (typeof document !== 'undefined') runAll();
+</script>
+</body>
+</html>

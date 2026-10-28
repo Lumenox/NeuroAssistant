@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spike NAS : couche fichiers</title>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #2c3e50; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .warn { background: #fef5e7; border-left: 4px solid #e67e22; padding: 8px 12px; font-size: 13.5px; margin: 10px 0 18px; }
+  section { border: 1px solid #d5dbdb; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid #2c3e50; background: #fff; border-radius: 5px; cursor: pointer; margin: 2px 4px 2px 0; }
+  button:hover:not(:disabled) { background: #eaf2f8; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #2c3e50; color: #fff; }
+  label { font-size: 13px; margin-right: 12px; }
+  input { font: inherit; padding: 4px 6px; border: 1px solid #b2bec3; border-radius: 4px; }
+  #ipp { width: 110px; } #auteur { width: 80px; } #visiteId { width: 300px; font-family: monospace; font-size: 12.5px; }
+  .status { font-size: 13.5px; margin-top: 6px; }
+  .ok { color: #1e8449; } .ko { color: #c0392b; } .mid { color: #b9770e; }
+  #log { font-family: Consolas, monospace; font-size: 12.5px; background: #1e2a33; color: #dfe6e9; padding: 10px; border-radius: 6px; height: 260px; overflow: auto; white-space: pre-wrap; }
+  #log .ok { color: #58d68d; } #log .ko { color: #ff7675; } #log .mid { color: #f5b041; }
+  pre#view { font-size: 12px; background: #f4f6f7; padding: 8px; border-radius: 6px; max-height: 260px; overflow: auto; }
+  ol { font-size: 13.5px; padding-left: 20px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<h1>Spike NAS : couche fichiers</h1>
+<div class="warn"><b>Fausses données uniquement.</b> Cette page écrit des fichiers chiffrés avec une clé de test (stockée dans ce navigateur) dans le dossier que vous choisissez. Utilisez un dossier de test dédié, jamais de vraies données patient. Choisissez un <b>sous-dossier</b> (Chrome refuse parfois la racine d'un lecteur ou « Documents »).</div>
+
+<section>
+  <h2>1. Dossier racine</h2>
+  <button id="btnPick" class="primary">Choisir le dossier racine</button>
+  <button id="btnReauth" style="display:none">Réautoriser le dossier mémorisé</button>
+  <button id="btnForget">Oublier le dossier</button>
+  <div class="status" id="rootStatus">…</div>
+  <div class="status" id="envStatus"></div>
+</section>
+
+<section>
+  <h2>2. Visite de test</h2>
+  <label>IPP fictif <input id="ipp" value="99000001"></label>
+  <label>Auteur <input id="auteur" value="RM" maxlength="8"></label><br><br>
+  <label>visite_id <input id="visiteId" placeholder="(rempli après « Nouvelle visite »)"></label><br><br>
+  <button id="btnNew" disabled>Nouvelle visite (v1)</button>
+  <button id="btnAdd" disabled>Ajouter une version</button>
+  <button id="btnRead" disabled>Relire la visite</button>
+  <div class="status" id="keyStatus"></div>
+</section>
+
+<section>
+  <h2>Journal</h2>
+  <div id="log"></div>
+  <h2 style="margin-top:12px">Dernière version lue</h2>
+  <pre id="view">(rien pour l'instant)</pre>
+</section>
+
+<section>
+  <h2>Mesure M6 : persistance de la permission</h2>
+  <ol>
+    <li>Choisir le dossier, écrire une visite, vérifier que tout est vert.</li>
+    <li>Recharger la page : noter l'état annoncé (« granted » = aucun clic ; « prompt » = un clic sur « Réautoriser »).</li>
+    <li>Fermer complètement Chrome, rouvrir la page : même observation.</li>
+    <li>Redémarrer le poste, ou ouvrir une autre session Windows : même observation.</li>
+    <li>Refaire le tout dans Edge.</li>
+  </ol>
+</section>
+
+<script src="core.js"></script>
+
+<!-- ================= COUCHE FICHIERS (sans DOM, testable avec un faux dossier) ================= -->
+<script id="layer">
+const NV_ID_RE_IPP = /^[0-9]{4,12}$/;
+const NV_ID_RE_VISITE = /^[A-Za-z0-9-]{8,64}$/;
+
+function nvCheckIds(ipp, visiteId) {
+  if (!NV_ID_RE_IPP.test(ipp || '')) throw new Error('IPP invalide (4 à 12 chiffres attendus)');
+  if (visiteId !== undefined && !NV_ID_RE_VISITE.test(visiteId || '')) throw new Error('visite_id invalide');
+}
+
+async function nvExists(dir, name) {
+  try { await dir.getFileHandle(name); return true; }
+  catch (e) { if (e && e.name === 'NotFoundError') return false; throw e; }
+}
+
+// Écrit UNE nouvelle version (jamais d'écrasement), puis la relit et la déchiffre pour vérifier.
+// La vérification d'existence n'est pas atomique : la relecture rend un éventuel conflit visible.
+async function nvWriteVersion(root, key, keyId, rec, auteur) {
+  nvCheckIds(rec.ipp, rec.visite_id);
+  const t0 = performance.now();
+  const patients = await root.getDirectoryHandle('patients', { create: true });
+  const dIpp = await patients.getDirectoryHandle(rec.ipp, { create: true });
+  const dVis = await dIpp.getDirectoryHandle(rec.visite_id, { create: true });
+  const bytes = await NVCore.encryptVersion(rec, key, keyId);
+
+  let name = null;
+  for (let i = 0; i < 5; i++) {
+    const candidat = NVCore.buildFileName({ version: rec.version, auteur, date: new Date() });
+    if (!(await nvExists(dVis, candidat))) { name = candidat; break; }
+  }
+  if (!name) throw new Error('Impossible de trouver un nom de fichier libre après 5 essais');
+  const t1 = performance.now();
+
+  const fh = await dVis.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(bytes);
+  await w.close();
+  const t2 = performance.now();
+
+  const back = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+  const dec = await NVCore.decryptVersion(back, key);
+  if (JSON.stringify(dec.obj) !== JSON.stringify(rec)) {
+    throw new Error('VERIFICATION ÉCHOUÉE : le fichier relu ne correspond pas à ce qui a été écrit (' + name + ')');
+  }
+  const t3 = performance.now();
+  return { name, bytes: bytes.length, ms: { preparation: t1 - t0, ecriture: t2 - t1, verification: t3 - t2, total: t3 - t0 } };
+}
+
+// Lit un dossier de visite : liste les noms, résout les versions, déchiffre la version courante.
+// Si la courante est illisible, retombe sur la plus récente version lisible (et le signale).
+async function nvReadVisit(root, key, ipp, visiteId) {
+  nvCheckIds(ipp, visiteId);
+  const t0 = performance.now();
+  const patients = await root.getDirectoryHandle('patients');
+  const dIpp = await patients.getDirectoryHandle(ipp);
+  const dVis = await dIpp.getDirectoryHandle(visiteId);
+  const names = [];
+  for await (const e of dVis.values()) if (e.kind === 'file') names.push(e.name);
+  const t1 = performance.now();
+
+  const res = NVCore.resolveVersions(names);
+  const out = { res, current: null, currentName: null, corrupt: [], fallback: false, ms: {} };
+
+  // Candidats : d'abord la courante, puis les autres versions (une seule fichier par version) en ordre décroissant.
+  const candidats = [];
+  if (res.courante) candidats.push(res.courante);
+  const parsed = names.map(n => NVCore.parseFileName(n)).filter(Boolean).sort((a, b) => b.version - a.version);
+  const compte = {};
+  parsed.forEach(p => { compte[p.version] = (compte[p.version] || 0) + 1; });
+  parsed.forEach(p => { if (compte[p.version] === 1 && !candidats.includes(p.nom)) candidats.push(p.nom); });
+
+  for (const nom of candidats) {
+    try {
+      const fh = await dVis.getFileHandle(nom);
+      const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+      const dec = await NVCore.decryptVersion(bytes, key);
+      out.current = dec.obj; out.currentName = nom;
+      out.fallback = (nom !== res.courante);
+      break;
+    } catch (e) {
+      out.corrupt.push({ nom, code: (e && e.code) || (e && e.name) || 'ERREUR', message: e && e.message });
+    }
+  }
+  const t2 = performance.now();
+  out.ms = { listage: t1 - t0, lecture: t2 - t1, total: t2 - t0 };
+  return out;
+}
+
+function nvFakeItems(n) {
+  const items = {};
+  for (let i = 0; i < n; i++) items['test' + (1 + (i % 6)) + '.item' + i] = Math.floor(Math.random() * 10);
+  return items;
+}
+
+function nvNewVisitRecord(ipp, auteur) {
+  return {
+    visite_id: crypto.randomUUID(), episode_id: crypto.randomUUID(), ipp,
+    version: 1, parent_version: null, auteur, date_saisie: new Date().toISOString(),
+    statut: 'actif', type: 'consultation', ddn: '1970-01-01', initiales: 'XX',
+    items: nvFakeItems(40)
+  };
+}
+
+// Construit la version suivante à partir de la courante (refuse en cas de bifurcation).
+async function nvAddVersion(root, key, keyId, ipp, visiteId, auteur) {
+  const lu = await nvReadVisit(root, key, ipp, visiteId);
+  if (lu.res.courante === null && lu.res.bifurcations.length) {
+    const haute = lu.res.bifurcations[lu.res.bifurcations.length - 1];
+    throw new Error('Bifurcation à la version ' + haute.version + ' : à résoudre avant d\'ajouter une version');
+  }
+  if (!lu.current) throw new Error('Aucune version lisible dans ce dossier');
+  const base = NVCore.parseFileName(lu.currentName).version;
+  const maxVersion = Math.max(base, ...lu.res.bifurcations.map(b => b.version), 0);
+  const rec = Object.assign({}, lu.current, {
+    version: maxVersion + 1, parent_version: base, auteur,
+    date_saisie: new Date().toISOString(),
+    items: Object.assign({}, lu.current.items, { ['test1.modif' + (maxVersion + 1)]: Math.floor(Math.random() * 10) })
+  });
+  return nvWriteVersion(root, key, keyId, rec, auteur);
+}
+</script>
+
+<!-- ================= INTERFACE ================= -->
+<script>
+(function () {
+  if (typeof document === 'undefined') return;
+  const $ = id => document.getElementById(id);
+  const KEY_ID = 1;
+  let root = null;     // FileSystemDirectoryHandle autorisé en lecture-écriture
+  let key = null;      // clé de TEST
+
+  // ---------- journal ----------
+  function log(msg, cls) {
+    const el = $('log');
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = new Date().toLocaleTimeString('fr-FR') + '  ' + msg;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+  const ms = x => Math.round(x) + ' ms';
+  function setStatus(id, text, cls) { const e = $(id); e.textContent = text; e.className = 'status ' + (cls || ''); }
+
+  // ---------- IndexedDB : mémorisation du handle ----------
+  function idb() {
+    return new Promise((resolve, reject) => {
+      const rq = indexedDB.open('nvspike-db', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('handles');
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    });
+  }
+  async function idbOp(mode, fn) {
+    const db = await idb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', mode);
+      const rq = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => { db.close(); resolve(rq && rq.result); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+  }
+  const saveHandle = h => idbOp('readwrite', s => s.put(h, 'root'));
+  const loadHandle = () => idbOp('readonly', s => s.get('root'));
+  const clearHandle = () => idbOp('readwrite', s => s.delete('root'));
+
+  // ---------- état de l'interface ----------
+  function refreshButtons() {
+    const ok = !!root && !!key;
+    $('btnNew').disabled = !ok;
+    $('btnAdd').disabled = !ok || !$('visiteId').value.trim();
+    $('btnRead').disabled = !ok || !$('visiteId').value.trim();
+  }
+
+  async function adopt(handle, how) {
+    root = handle;
+    setStatus('rootStatus', 'Dossier actif : « ' + handle.name + ' » (' + how + ')', 'ok');
+    refreshButtons();
+  }
+
+  // ---------- clé de test ----------
+  async function initKey() {
+    let b64 = null;
+    try { b64 = localStorage.getItem('nvspike_key_b64'); } catch (e) { /* ignoré */ }
+    if (b64) {
+      key = await NVCore.importKeyBase64(b64);
+      setStatus('keyStatus', 'Clé de TEST rechargée depuis ce navigateur (key_id ' + KEY_ID + ').', 'ok');
+    } else {
+      const k = await NVCore.generateDataKey();
+      const exported = await NVCore.exportKeyBase64(k);
+      let saved = false;
+      try { localStorage.setItem('nvspike_key_b64', exported); saved = true; } catch (e) { /* ignoré */ }
+      key = await NVCore.importKeyBase64(exported);
+      setStatus('keyStatus', saved
+        ? 'Nouvelle clé de TEST générée et mémorisée dans ce navigateur (key_id ' + KEY_ID + ').'
+        : 'Clé de TEST en mémoire seulement : elle sera perdue au rechargement (stockage du navigateur indisponible).',
+        saved ? 'ok' : 'mid');
+    }
+  }
+
+  // ---------- événements ----------
+  $('btnPick').onclick = async () => {
+    if (!window.showDirectoryPicker) { log('showDirectoryPicker indisponible : utilisez Chrome ou Edge.', 'ko'); return; }
+    try {
+      const h = await window.showDirectoryPicker({ id: 'nvspike', mode: 'readwrite' });
+      await saveHandle(h);
+      $('btnReauth').style.display = 'none';
+      await adopt(h, 'choisi à l\'instant');
+      log('Dossier choisi et mémorisé : ' + h.name, 'ok');
+    } catch (e) {
+      log(e && e.name === 'AbortError' ? 'Sélection annulée.' : 'Sélection impossible : ' + (e && e.message), e && e.name === 'AbortError' ? 'mid' : 'ko');
+    }
+  };
+
+  $('btnReauth').onclick = async () => {
+    try {
+      const h = await loadHandle();
+      if (!h) { log('Aucun dossier mémorisé.', 'mid'); return; }
+      const t0 = performance.now();
+      const p = await h.requestPermission({ mode: 'readwrite' });
+      log('requestPermission → ' + p + ' (' + ms(performance.now() - t0) + ')', p === 'granted' ? 'ok' : 'ko');
+      if (p === 'granted') { $('btnReauth').style.display = 'none'; await adopt(h, 'réautorisé'); }
+    } catch (e) { log('Réautorisation impossible : ' + (e && e.message), 'ko'); }
+  };
+
+  $('btnForget').onclick = async () => {
+    try { await clearHandle(); } catch (e) { /* ignoré */ }
+    root = null; refreshButtons();
+    $('btnReauth').style.display = 'none';
+    setStatus('rootStatus', 'Aucun dossier. Choisissez-en un.', 'mid');
+    log('Dossier mémorisé oublié.', 'mid');
+  };
+
+  $('visiteId').addEventListener('input', refreshButtons);
+
+  function readInputs() {
+    const ipp = $('ipp').value.trim();
+    const auteur = $('auteur').value.trim().toUpperCase();
+    return { ipp, auteur };
+  }
+  function showWrite(w, label) {
+    log(label + ' → ' + w.name + ' (' + w.bytes + ' octets) | préparation ' + ms(w.ms.preparation) +
+      ', écriture ' + ms(w.ms.ecriture) + ', vérification ' + ms(w.ms.verification) + ', total ' + ms(w.ms.total), 'ok');
+  }
+
+  $('btnNew').onclick = async () => {
+    try {
+      const { ipp, auteur } = readInputs();
+      const rec = nvNewVisitRecord(ipp, auteur);
+      const w = await nvWriteVersion(root, key, KEY_ID, rec, auteur);
+      $('visiteId').value = rec.visite_id; refreshButtons();
+      showWrite(w, 'Visite créée (v1)');
+    } catch (e) { log('ÉCHEC : ' + (e && e.message), 'ko'); }
+  };
+
+  $('btnAdd').onclick = async () => {
+    try {
+      const { ipp, auteur } = readInputs();
+      const w = await nvAddVersion(root, key, KEY_ID, ipp, $('visiteId').value.trim(), auteur);
+      showWrite(w, 'Version ajoutée');
+    } catch (e) { log('ÉCHEC : ' + (e && e.message), 'ko'); }
+  };
+
+  $('btnRead').onclick = async () => {
+    try {
+      const { ipp } = readInputs();
+      const r = await nvReadVisit(root, key, ipp, $('visiteId').value.trim());
+      log('Lecture : ' + r.res.courante + ' | listage ' + ms(r.ms.listage) + ', lecture ' + ms(r.ms.lecture), r.current ? 'ok' : 'ko');
+      if (r.res.bifurcations.length) log('BIFURCATION(S) : ' + JSON.stringify(r.res.bifurcations.map(b => 'v' + b.version + ' x' + b.fichiers.length)), 'mid');
+      if (r.res.lacunes.length) log('Versions manquantes : ' + r.res.lacunes.join(', '), 'mid');
+      if (r.res.ignores.length) log('Fichiers ignorés : ' + r.res.ignores.join(', '), 'mid');
+      r.corrupt.forEach(c => log('Fichier illisible : ' + c.nom + ' [' + c.code + ']', 'ko'));
+      if (r.fallback) log('La version courante est illisible : repli sur ' + r.currentName, 'mid');
+      $('view').textContent = r.current ? JSON.stringify(r.current, null, 2) : '(aucune version lisible)';
+    } catch (e) { log('ÉCHEC : ' + (e && e.message), 'ko'); }
+  };
+
+  // ---------- démarrage ----------
+  (async function init() {
+    setStatus('envStatus',
+      'Contexte sécurisé : ' + (window.isSecureContext ? 'oui' : 'NON (WebCrypto peut être indisponible)') +
+      ' | showDirectoryPicker : ' + (window.showDirectoryPicker ? 'oui' : 'NON'),
+      window.isSecureContext && window.showDirectoryPicker ? '' : 'ko');
+    try { await initKey(); } catch (e) { setStatus('keyStatus', 'Clé impossible : ' + (e && e.message), 'ko'); }
+    try {
+      const h = await loadHandle();
+      if (!h) { setStatus('rootStatus', 'Aucun dossier mémorisé. Choisissez-en un.', 'mid'); }
+      else {
+        const t0 = performance.now();
+        const p = await h.queryPermission({ mode: 'readwrite' });
+        log('Au chargement : dossier « ' + h.name + ' », permission = ' + p + ' (' + ms(performance.now() - t0) + ')', p === 'granted' ? 'ok' : 'mid');
+        if (p === 'granted') await adopt(h, 'permission conservée, aucun clic');
+        else { setStatus('rootStatus', 'Dossier mémorisé « ' + h.name + ' » : permission = ' + p + '. Un clic est nécessaire.', 'mid'); $('btnReauth').style.display = ''; }
+      }
+    } catch (e) { setStatus('rootStatus', 'Mémorisation indisponible : ' + (e && e.message), 'mid'); }
+    refreshButtons();
+  })();
+})();
+</script>
+</body>
+</html>
