@@ -221,6 +221,36 @@ async function nvExists(dir, name) {
   catch (e) { if (e && e.name === 'NotFoundError') return false; throw e; }
 }
 
+// ---------------------------------------------------------------- erreurs transitoires
+// Le navigateur lève parfois InvalidStateError / NotReadableError quand l'état d'un fichier ou d'un
+// dossier a changé entre deux appels (un autre poste écrit au même moment). Ces lectures sont rejouables.
+// L'étape (label) est ajoutée au message pour identifier l'appel fautif dans les rapports.
+const NV_TRANSIENT = ['InvalidStateError', 'NotReadableError', 'NoModificationAllowedError'];
+async function nvRetry(label, fn, tries) {
+  tries = tries || 4;
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      const transient = e && NV_TRANSIENT.includes(e.name);
+      if (transient && i < tries) { await new Promise(r => setTimeout(r, 150 * i)); continue; }
+      if (e && e.name && !String(e.message).startsWith('[')) {
+        const e2 = new Error('[' + label + ' / ' + e.name + (i > 1 ? ' après ' + i + ' essais' : '') + '] ' + e.message);
+        e2.name = e.name; e2.code = e.code; throw e2;
+      }
+      throw e;
+    }
+  }
+}
+// Liste les entrées d'un dossier (nom + type), avec reprise sur erreur transitoire.
+const nvListEntries = (dir, label) => nvRetry(label || 'liste', async () => {
+  const out = [];
+  for await (const e of dir.values()) out.push({ name: e.name, kind: e.kind });
+  return out;
+});
+// Lit les octets d'un fichier, avec reprise sur erreur transitoire.
+const nvReadBytes = (dir, nom, label) => nvRetry(label || 'lecture', async () =>
+  new Uint8Array(await (await (await dir.getFileHandle(nom)).getFile()).arrayBuffer()));
+
 // ---------------------------------------------------------------- écriture
 // Écrit UNE nouvelle version (jamais d'écrasement), puis la relit et la déchiffre pour vérifier.
 // La vérification d'existence n'est pas atomique : la relecture rend un éventuel conflit visible.
@@ -240,13 +270,12 @@ async function nvWriteVersion(root, key, keyId, rec, auteur) {
   if (!name) throw new Error('Impossible de trouver un nom de fichier libre après 5 essais');
   const t1 = performance.now();
 
-  const fh = await dVis.getFileHandle(name, { create: true });
-  const w = await fh.createWritable();
-  await w.write(bytes);
-  await w.close();
+  const fh = await nvRetry('écriture:création', () => dVis.getFileHandle(name, { create: true }));
+  const w = await nvRetry('écriture:createWritable', () => fh.createWritable());
+  await nvRetry('écriture:write+close', async () => { await w.write(bytes); await w.close(); }, 1);
   const t2 = performance.now();
 
-  const back = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+  const back = await nvReadBytes(dVis, name, 'écriture:relecture');
   const dec = await NVCore.decryptVersion(back, key);
   if (JSON.stringify(dec.obj) !== JSON.stringify(rec)) {
     throw new Error('VERIFICATION ÉCHOUÉE : le fichier relu ne correspond pas à ce qui a été écrit (' + name + ')');
@@ -264,8 +293,7 @@ async function nvReadVisit(root, key, ipp, visiteId) {
   const patients = await root.getDirectoryHandle('patients');
   const dIpp = await patients.getDirectoryHandle(ipp);
   const dVis = await dIpp.getDirectoryHandle(visiteId);
-  const names = [];
-  for await (const e of dVis.values()) if (e.kind === 'file') names.push(e.name);
+  const names = (await nvListEntries(dVis, 'lecture:liste')).filter(e => e.kind === 'file').map(e => e.name);
   const t1 = performance.now();
 
   const res = NVCore.resolveVersions(names);
@@ -288,8 +316,7 @@ async function nvReadVisit(root, key, ipp, visiteId) {
     const lisibles = [];
     for (const nom of groupes.get(v).slice().sort()) {
       try {
-        const fh = await dVis.getFileHandle(nom);
-        const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+        const bytes = await nvReadBytes(dVis, nom, 'lecture:fichier');
         const dec = await NVCore.decryptVersion(bytes, key);
         lisibles.push({ nom, obj: dec.obj });
       } catch (e) {
@@ -446,7 +473,7 @@ async function nvPPMaxVersion(root, ipp, vid) {
   try {
     const dVis = await (await (await root.getDirectoryHandle('patients')).getDirectoryHandle(ipp)).getDirectoryHandle(vid);
     let max = 0;
-    for await (const e of dVis.values()) { const p = e.kind === 'file' && NVCore.parseFileName(e.name); if (p && p.version > max) max = p.version; }
+    for (const e of await nvListEntries(dVis, 'pp:maxversion')) { const p = e.kind === 'file' && NVCore.parseFileName(e.name); if (p && p.version > max) max = p.version; }
     return max;
   } catch (e) { if (e && e.name === 'NotFoundError') return 0; throw e; }
 }
@@ -461,10 +488,9 @@ async function nvPPWrite(root, key, keyId, ipp, vid, version, auteur, payload) {
   const bytes = await NVCore.encryptVersion(rec, key, keyId);
   const name = NVCore.buildFileName({ version, auteur, date: new Date() });
   const t0 = performance.now();
-  const fh = await dVis.getFileHandle(name, { create: true });
-  const w = await fh.createWritable();
-  await w.write(bytes);
-  await w.close();
+  const fh = await nvRetry('pp:création', () => dVis.getFileHandle(name, { create: true }));
+  const w = await nvRetry('pp:createWritable', () => fh.createWritable());
+  await nvRetry('pp:write+close', async () => { await w.write(bytes); await w.close(); }, 1);
   return { name, t0, t1: performance.now() };
 }
 
@@ -476,20 +502,19 @@ async function nvPPWait(root, key, ipp, vid, target, t0, ctl, pollMs, timeoutMs)
     if (performance.now() - t0 > timeoutMs) throw new Error('Délai dépassé (' + Math.round(timeoutMs / 1000) + ' s) en attendant la version ' + target + ' : l\'autre poste est-il lancé, avec le même nombre de tours ?');
     polls++;
     let dVis = null;
+    let noms = [];
     try {
-      dVis = await (await (await root.getDirectoryHandle('patients')).getDirectoryHandle(ipp)).getDirectoryHandle(vid);
-    } catch (e) { if (!(e && e.name === 'NotFoundError')) throw e; }
-    if (dVis) {
-      const noms = [];
-      for await (const e of dVis.values()) {
+      dVis = await nvRetry('pp:dossier', async () => await (await (await root.getDirectoryHandle('patients')).getDirectoryHandle(ipp)).getDirectoryHandle(vid));
+      for (const e of await nvListEntries(dVis, 'pp:liste')) {
         const p = e.kind === 'file' && NVCore.parseFileName(e.name);
         if (p && p.version === target) noms.push(e.name);
       }
+    } catch (e) { if (!(e && e.name === 'NotFoundError')) throw e; dVis = null; noms = []; }
+    if (dVis) {
       if (noms.length && tName === null) tName = performance.now() - t0;
       for (const nom of noms) {
         try {
-          const f = await (await dVis.getFileHandle(nom)).getFile();
-          await NVCore.decryptVersion(new Uint8Array(await f.arrayBuffer()), key);
+          await NVCore.decryptVersion(await nvReadBytes(dVis, nom, 'pp:lecture'), key);
           return { tName, tReadable: performance.now() - t0, polls };
         } catch (e) { /* fichier créé mais pas encore complet : on continue à scruter */ }
       }
