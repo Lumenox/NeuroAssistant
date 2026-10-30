@@ -81,6 +81,39 @@
 </section>
 
 <section>
+  <h2>3 bis. Tests à deux postes : M8 (visibilité) et fréquence des conflits</h2>
+  <div class="hint">Les deux postes utilisent le même dossier racine <b>et la même clé de test</b> (même empreinte). L'un est « A », l'autre « B ». Dans les deux cas, ces tests ne créent que de fausses données sous l'IPP 99000000.</div>
+
+  <h3>Ping-pong : délai avant qu'un poste voie un fichier écrit par l'autre</h3>
+  <ol>
+    <li><b>Poste A</b> : « A : créer la visite », puis copier l'identifiant affiché dans le champ « Visite ».</li>
+    <li><b>Poste B</b> : coller l'identifiant, mettre le même nombre de tours, cliquer « B : répondre » (à lancer en premier).</li>
+    <li><b>Poste A</b> : cliquer « A : lancer ». Une visite ne sert qu'une fois : en recréer une pour recommencer.</li>
+  </ol>
+  <label>Visite <input id="ppId" style="width:190px; font-family:monospace"></label>
+  <label>Tours <input id="ppN" class="num" type="number" value="20" min="1" max="200"></label>
+  <label>Scrutation (ms) <input id="ppPoll" class="num" type="number" value="100" min="20" max="2000"></label><br>
+  <button id="btnPPCreate" disabled>A : créer la visite</button>
+  <button id="btnPPB" disabled>B : répondre</button>
+  <button id="btnPPA" disabled>A : lancer</button>
+
+  <h3>Course : les deux postes enregistrent la même visite au même moment</h3>
+  <ol>
+    <li><b>Poste A</b> : « A : préparer » crée N visites et affiche l'identifiant de course et l'heure de départ.</li>
+    <li><b>Poste B</b> : saisir le même identifiant, le même N, la même période et la même heure de départ.</li>
+    <li><b>Les deux postes</b> : choisir son rôle, cliquer « Lancer ma course » avant l'heure de départ. Une fois les deux terminés : « Analyser » sur un seul poste.</li>
+  </ol>
+  <label>Identifiant <input id="coRun" style="width:90px; font-family:monospace"></label>
+  <label>Tours <input id="coN" class="num" type="number" value="12" min="1" max="200"></label>
+  <label>Période (s) <input id="coPer" class="num" type="number" value="15" min="5" max="300"></label>
+  <label>Départ (hh:mm:ss) <input id="coT0" style="width:90px; font-family:monospace"></label>
+  <label>Rôle <select id="role"><option value="A">Poste A</option><option value="B">Poste B</option></select></label><br>
+  <button id="btnCoPrep" disabled>A : préparer</button>
+  <button id="btnCoRun" disabled>Lancer ma course</button>
+  <button id="btnCoAna" disabled>Analyser</button>
+</section>
+
+<section>
   <h2>Progression</h2>
   <progress id="prog" value="0" max="1"></progress>
   <div class="status" id="progText">Inactif.</div>
@@ -236,25 +269,38 @@ async function nvReadVisit(root, key, ipp, visiteId) {
   const t1 = performance.now();
 
   const res = NVCore.resolveVersions(names);
-  const out = { res, current: null, currentName: null, corrupt: [], fallback: false, ms: {} };
+  const out = { res, current: null, currentName: null, corrupt: [], fallback: false, bifs: [], maxVersionNom: 0, ms: {} };
 
-  const candidats = [];
-  if (res.courante) candidats.push(res.courante);
-  const parsed = names.map(n => NVCore.parseFileName(n)).filter(Boolean).sort((a, b) => b.version - a.version);
-  const compte = {};
-  parsed.forEach(p => { compte[p.version] = (compte[p.version] || 0) + 1; });
-  parsed.forEach(p => { if (compte[p.version] === 1 && !candidats.includes(p.nom)) candidats.push(p.nom); });
+  // Versions présentes d'après les noms, de la plus haute à la plus basse.
+  const groupes = new Map();
+  for (const n of names) {
+    const p = NVCore.parseFileName(n);
+    if (!p) continue;
+    if (!groupes.has(p.version)) groupes.set(p.version, []);
+    groupes.get(p.version).push(n);
+  }
+  const versions = [...groupes.keys()].sort((a, b) => b - a);
+  out.maxVersionNom = versions.length ? versions[0] : 0;
 
-  for (const nom of candidats) {
-    try {
-      const fh = await dVis.getFileHandle(nom);
-      const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
-      const dec = await NVCore.decryptVersion(bytes, key);
-      out.current = dec.obj; out.currentName = nom;
-      out.fallback = (nom !== res.courante);
+  // Un fichier illisible (vide, tronqué, écriture interrompue ou en cours) est ignoré.
+  // Une bifurcation n'est réelle que si au moins deux fichiers LISIBLES portent le même numéro de version.
+  for (const v of versions) {
+    const lisibles = [];
+    for (const nom of groupes.get(v).slice().sort()) {
+      try {
+        const fh = await dVis.getFileHandle(nom);
+        const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+        const dec = await NVCore.decryptVersion(bytes, key);
+        lisibles.push({ nom, obj: dec.obj });
+      } catch (e) {
+        out.corrupt.push({ nom, code: (e && e.code) || (e && e.name) || 'ERREUR', message: e && e.message });
+      }
+    }
+    if (lisibles.length) {
+      out.current = lisibles[0].obj; out.currentName = lisibles[0].nom;
+      out.fallback = (v !== out.maxVersionNom);
+      if (lisibles.length > 1) out.bifs.push({ version: v, fichiers: lisibles.map(x => x.nom) });
       break;
-    } catch (e) {
-      out.corrupt.push({ nom, code: (e && e.code) || (e && e.name) || 'ERREUR', message: e && e.message });
     }
   }
   const t2 = performance.now();
@@ -386,6 +432,172 @@ async function nvScan(root, key, o, ctl, onTick) {
   return out;
 }
 
+// ================================================================ tests à deux postes (M8 et conflits)
+const NV_PP_IPP = '99000000';
+const nvSleep = ms => new Promise(r => setTimeout(r, ms));
+async function nvSleepStop(ms, ctl) {            // attente interruptible
+  const fin = Date.now() + ms;
+  while (Date.now() < fin && !(ctl && ctl.stop)) await nvSleep(Math.min(250, Math.max(1, fin - Date.now())));
+}
+const nvPad2 = n => String(n).padStart(2, '0');
+
+// Plus haute version présente d'après les noms (0 si le dossier n'existe pas).
+async function nvPPMaxVersion(root, ipp, vid) {
+  try {
+    const dVis = await (await (await root.getDirectoryHandle('patients')).getDirectoryHandle(ipp)).getDirectoryHandle(vid);
+    let max = 0;
+    for await (const e of dVis.values()) { const p = e.kind === 'file' && NVCore.parseFileName(e.name); if (p && p.version > max) max = p.version; }
+    return max;
+  } catch (e) { if (e && e.name === 'NotFoundError') return 0; throw e; }
+}
+
+// Écrit une version minimale, sans relecture. t0 = avant la création du fichier, t1 = après la fermeture de l'écriture.
+async function nvPPWrite(root, key, keyId, ipp, vid, version, auteur, payload) {
+  const patients = await root.getDirectoryHandle('patients', { create: true });
+  const dIpp = await patients.getDirectoryHandle(ipp, { create: true });
+  const dVis = await dIpp.getDirectoryHandle(vid, { create: true });
+  const rec = Object.assign({ visite_id: vid, ipp, version, parent_version: version - 1, auteur,
+    date_saisie: new Date().toISOString(), statut: 'actif', items: {} }, payload);
+  const bytes = await NVCore.encryptVersion(rec, key, keyId);
+  const name = NVCore.buildFileName({ version, auteur, date: new Date() });
+  const t0 = performance.now();
+  const fh = await dVis.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(bytes);
+  await w.close();
+  return { name, t0, t1: performance.now() };
+}
+
+// Scrute le dossier jusqu'à ce qu'une version EXACTEMENT égale à `target` soit visible, puis lisible.
+// Les durées sont comptées depuis t0 (performance.now()). tName : le nom apparaît ; tReadable : le contenu se déchiffre.
+async function nvPPWait(root, key, ipp, vid, target, t0, ctl, pollMs, timeoutMs) {
+  let tName = null, polls = 0;
+  while (!(ctl && ctl.stop)) {
+    if (performance.now() - t0 > timeoutMs) throw new Error('Délai dépassé (' + Math.round(timeoutMs / 1000) + ' s) en attendant la version ' + target + ' : l\'autre poste est-il lancé, avec le même nombre de tours ?');
+    polls++;
+    let dVis = null;
+    try {
+      dVis = await (await (await root.getDirectoryHandle('patients')).getDirectoryHandle(ipp)).getDirectoryHandle(vid);
+    } catch (e) { if (!(e && e.name === 'NotFoundError')) throw e; }
+    if (dVis) {
+      const noms = [];
+      for await (const e of dVis.values()) {
+        const p = e.kind === 'file' && NVCore.parseFileName(e.name);
+        if (p && p.version === target) noms.push(e.name);
+      }
+      if (noms.length && tName === null) tName = performance.now() - t0;
+      for (const nom of noms) {
+        try {
+          const f = await (await dVis.getFileHandle(nom)).getFile();
+          await NVCore.decryptVersion(new Uint8Array(await f.arrayBuffer()), key);
+          return { tName, tReadable: performance.now() - t0, polls };
+        } catch (e) { /* fichier créé mais pas encore complet : on continue à scruter */ }
+      }
+    }
+    await nvSleep(pollMs);
+  }
+  throw new Error('Arrêté');
+}
+
+// Poste A : écrit la version 2i, attend la version 2i+1 de B. L'aller-retour est mesuré sur la seule horloge de A.
+async function nvPPRunA(root, key, keyId, vid, rounds, pollMs, ctl, onTick) {
+  const out = { rtt: [], tName: [], write: [], erreurs: [], tours: 0 };
+  if ((await nvPPMaxVersion(root, NV_PP_IPP, vid)) !== 1) throw new Error('Cette visite a déjà servi (ou n\'existe pas) : créez-en une nouvelle');
+  for (let i = 1; i <= rounds && !(ctl && ctl.stop); i++) {
+    try {
+      const w = await nvPPWrite(root, key, keyId, NV_PP_IPP, vid, 2 * i, 'PA', { round: i });
+      const r = await nvPPWait(root, key, NV_PP_IPP, vid, 2 * i + 1, w.t1, ctl, pollMs, 60000);
+      out.write.push(w.t1 - w.t0); out.rtt.push(r.tReadable); out.tName.push(r.tName === null ? r.tReadable : r.tName);
+      out.tours = i;
+    } catch (e) { out.erreurs.push((e && e.message) || String(e)); break; }
+    if (onTick) onTick(i, rounds);
+  }
+  return out;
+}
+
+// Poste B : attend la version 2i de A, répond aussitôt par la version 2i+1.
+async function nvPPRunB(root, key, keyId, vid, rounds, pollMs, ctl, onTick) {
+  const out = { write: [], polls: [], erreurs: [], tours: 0 };
+  if ((await nvPPMaxVersion(root, NV_PP_IPP, vid)) !== 1) throw new Error('Cette visite a déjà servi (ou n\'existe pas encore) : demandez à A d\'en créer une nouvelle');
+  for (let i = 1; i <= rounds && !(ctl && ctl.stop); i++) {
+    try {
+      const r = await nvPPWait(root, key, NV_PP_IPP, vid, 2 * i, performance.now(), ctl, pollMs, i === 1 ? 600000 : 60000);
+      const w = await nvPPWrite(root, key, keyId, NV_PP_IPP, vid, 2 * i + 1, 'PB', { round: i });
+      out.write.push(w.t1 - w.t0); out.polls.push(r.polls);
+      out.tours = i;
+    } catch (e) { out.erreurs.push((e && e.message) || String(e)); break; }
+    if (onTick) onTick(i, rounds);
+  }
+  return out;
+}
+
+// ---- course : même visite enregistrée par les deux postes presque en même temps
+const nvCourseId = (base, i) => base + '-r' + nvPad2(i);
+
+async function nvCoursePrepare(root, key, keyId, base, n, ctl, onTick) {
+  await nvPool(n, 4, async (k) => {
+    const rec = nvNewVisitRecord(NV_PP_IPP, 'PA', 20);
+    rec.visite_id = nvCourseId(base, k + 1);
+    await nvWriteVersion(root, key, keyId, rec, 'PA');
+  }, ctl, onTick);
+}
+
+// Chaque tour i démarre à t0Epoch + (i-1) × période (+ un léger aléa), sur l'horloge locale du poste.
+async function nvCourseRun(root, key, keyId, base, n, periodMs, t0Epoch, auteur, jitterMax, ctl, onTick) {
+  const out = [];
+  for (let i = 1; i <= n && !(ctl && ctl.stop); i++) {
+    const jitter = Math.floor(Math.random() * (jitterMax + 1));
+    await nvSleepStop(t0Epoch + (i - 1) * periodMs + jitter - Date.now(), ctl);
+    if (ctl && ctl.stop) break;
+    const t = performance.now();
+    try {
+      const w = await nvAddVersion(root, key, keyId, NV_PP_IPP, nvCourseId(base, i), auteur);
+      out.push({ i, jitter, ms: performance.now() - t, nom: w.name });
+    } catch (e) { out.push({ i, jitter, erreur: (e && e.message) || String(e) }); }
+    if (onTick) onTick(i, n);
+  }
+  return out;
+}
+
+// Pour chaque tour : les deux ajouts sont-ils en chaîne (v2 puis v3) ou en bifurcation (deux v2) ?
+// L'écart est mesuré sur l'horloge du NAS (date de modification des fichiers), donc sans décalage entre postes.
+async function nvCourseAnalyse(root, base, n) {
+  const dIpp = await (await root.getDirectoryHandle('patients')).getDirectoryHandle(NV_PP_IPP);
+  const rows = [];
+  for (let i = 1; i <= n; i++) {
+    let dVis;
+    try { dVis = await dIpp.getDirectoryHandle(nvCourseId(base, i)); }
+    catch (e) { if (e && e.name === 'NotFoundError') { rows.push({ i, absent: true, n: 0 }); continue; } throw e; }
+    const ajouts = [];
+    for await (const e of dVis.values()) {
+      const p = e.kind === 'file' && NVCore.parseFileName(e.name);
+      if (!p || p.version < 2) continue;
+      const f = await (await dVis.getFileHandle(e.name)).getFile();
+      ajouts.push({ version: p.version, auteur: p.auteur, mod: f.lastModified });
+    }
+    ajouts.sort((a, b) => a.mod - b.mod);
+    const compte = {};
+    ajouts.forEach(a => { compte[a.version] = (compte[a.version] || 0) + 1; });
+    rows.push({ i, n: ajouts.length, bif: Object.values(compte).some(c => c > 1),
+      ecart: ajouts.length >= 2 ? ajouts[1].mod - ajouts[0].mod : null,
+      detail: ajouts.map(a => 'v' + a.version + ' ' + a.auteur).join(', ') });
+  }
+  return rows;
+}
+
+function nvCourseSummary(rows) {
+  const bornes = [250, 500, 1000, 2000, Infinity];
+  const noms = ['< 250 ms', '250 à 500 ms', '500 ms à 1 s', '1 à 2 s', '> 2 s'];
+  const classes = noms.map(() => ({ chaines: 0, bifs: 0 }));
+  let incomplets = 0;
+  for (const r of rows) {
+    if (r.absent || r.n < 2) { incomplets++; continue; }
+    const k = bornes.findIndex(b => r.ecart < b);
+    if (r.bif) classes[k].bifs++; else classes[k].chaines++;
+  }
+  return { noms, classes, incomplets };
+}
+
 // ---------------------------------------------------------------- nettoyage (fausses données seulement)
 async function nvPurgeFake(root) {
   let patients;
@@ -405,17 +617,16 @@ async function nvPurgeFake(root) {
 // ---------------------------------------------------------------- test manuel : version suivante
 async function nvAddVersion(root, key, keyId, ipp, visiteId, auteur) {
   const lu = await nvReadVisit(root, key, ipp, visiteId);
-  if (lu.res.courante === null && lu.res.bifurcations.length) {
-    const haute = lu.res.bifurcations[lu.res.bifurcations.length - 1];
-    throw new Error('Bifurcation à la version ' + haute.version + ' : à résoudre avant d\'ajouter une version');
+  if (lu.bifs.length) {
+    throw new Error('Bifurcation à la version ' + lu.bifs[0].version + ' : à résoudre avant d\'ajouter une version');
   }
   if (!lu.current) throw new Error('Aucune version lisible dans ce dossier');
-  const base = NVCore.parseFileName(lu.currentName).version;
-  const maxVersion = Math.max(base, ...lu.res.bifurcations.map(b => b.version), 0);
+  const base = NVCore.parseFileName(lu.currentName).version;   // dernière version LISIBLE : le parent
+  const suivante = lu.maxVersionNom + 1;                       // jamais un numéro déjà pris, même par un fichier illisible
   const rec = Object.assign({}, lu.current, {
-    version: maxVersion + 1, parent_version: base, auteur,
+    version: suivante, parent_version: base, auteur,
     date_saisie: new Date().toISOString(),
-    items: Object.assign({}, lu.current.items, { ['test1.modif' + (maxVersion + 1)]: nvRandInt(10) })
+    items: Object.assign({}, lu.current.items, { ['test1.modif' + suivante]: nvRandInt(10) })
   });
   return nvWriteVersion(root, key, keyId, rec, auteur);
 }
@@ -534,7 +745,8 @@ async function nvAddVersion(root, key, keyId, ipp, visiteId, auteur) {
   // ---------- état ----------
   function refreshButtons() {
     const ok = !!root && !!key && !busy;
-    ['btnGen', 'btnPurge', 'btnM1', 'btnM2a', 'btnM2b', 'btnM2c', 'btnNew'].forEach(id => { $(id).disabled = !ok; });
+    ['btnGen', 'btnPurge', 'btnM1', 'btnM2a', 'btnM2b', 'btnM2c', 'btnNew',
+     'btnPPCreate', 'btnPPB', 'btnPPA', 'btnCoPrep', 'btnCoRun', 'btnCoAna'].forEach(id => { $(id).disabled = !ok; });
     const hasV = !!$('visiteId').value.trim();
     $('btnAdd').disabled = !ok || !hasV;
     $('btnRead').disabled = !ok || !hasV;
@@ -696,6 +908,95 @@ async function nvAddVersion(root, key, keyId, ipp, visiteId, auteur) {
   scanButton('btnM2b', 'bytes', 'noms + lecture des octets');
   scanButton('btnM2c', 'decrypt', 'noms + déchiffrement');
 
+  // ---------- tests à deux postes ----------
+  const NOTE_RTT = '  aller-retour = visibilité A→B + détection par B (≤ scrutation) + écriture de B + visibilité B→A ; la visibilité dans un seul sens est donc inférieure à (aller-retour − écriture de B) / 2. Joindre le rapport du poste B (durées d\'écriture de B).';
+
+  $('btnPPCreate').onclick = () => run('Ping-pong : création de la visite (poste A)', async () => {
+    const vid = 'pp-' + (Math.random().toString(16) + '000000').slice(2, 8);
+    const rec = nvNewVisitRecord(NV_PP_IPP, 'PA', 5);
+    rec.visite_id = vid;
+    await nvWriteVersion(root, key, KEY_ID, rec, 'PA');
+    $('ppId').value = vid;
+    log('Visite de ping-pong créée : ' + vid + ' (copiez-la sur le poste B).', 'ok');
+    report('  visite de ping-pong : ' + vid + ' (v1)');
+  });
+
+  $('btnPPB').onclick = () => run('Ping-pong : poste B (répondeur)', async () => {
+    const vid = $('ppId').value.trim(), n = intVal('ppN', 1, 200), poll = intVal('ppPoll', 20, 2000);
+    report('  poste B, visite ' + vid + ', ' + n + ' tours, scrutation ' + poll + ' ms');
+    $('progText').textContent = 'En attente du poste A… (lancez « A : lancer »)';
+    const r = await nvPPRunB(root, key, KEY_ID, vid, n, poll, ctl, makeTick('Tours de B'));
+    const msg = r.tours + ' / ' + n + ' tours' + (r.erreurs.length ? ' | ' + r.erreurs[0] : '') + ' | scrutations par tour : ' +
+      (r.polls.length ? (r.polls.reduce((a, b) => a + b, 0) / r.polls.length).toFixed(1) : '-');
+    log('Ping-pong B : ' + msg, r.erreurs.length ? 'ko' : 'ok'); report('  ' + msg);
+    showDist('Ping-pong B : écriture de sa réponse (ms)', r.write);
+  });
+
+  $('btnPPA').onclick = () => run('Ping-pong : poste A (initiateur)', async () => {
+    const vid = $('ppId').value.trim(), n = intVal('ppN', 1, 200), poll = intVal('ppPoll', 20, 2000);
+    report('  poste A, visite ' + vid + ', ' + n + ' tours, scrutation ' + poll + ' ms');
+    const r = await nvPPRunA(root, key, KEY_ID, vid, n, poll, ctl, makeTick('Tours de A'));
+    const msg = r.tours + ' / ' + n + ' tours' + (r.erreurs.length ? ' | ' + r.erreurs[0] : '');
+    log('Ping-pong A : ' + msg, r.erreurs.length ? 'ko' : 'ok'); report('  ' + msg);
+    showDist('Ping-pong A : aller-retour jusqu\'à la réponse LISIBLE de B (ms)', r.rtt);
+    showDist('Ping-pong A : aller-retour jusqu\'à l\'apparition du NOM du fichier de B (ms)', r.tName);
+    showDist('Ping-pong A : écriture de A (ms)', r.write);
+    report(NOTE_RTT);
+  });
+
+  $('btnCoPrep').onclick = () => run('Course : préparation (poste A)', async () => {
+    const n = intVal('coN', 1, 200);
+    const rid = (Math.random().toString(16) + '0000').slice(2, 6);
+    await nvCoursePrepare(root, key, KEY_ID, 'course-' + rid, n, ctl, makeTick('Visites préparées'));
+    const d = new Date(Math.ceil((Date.now() + 90000) / 1000) * 1000);
+    const hhmmss = [d.getHours(), d.getMinutes(), d.getSeconds()].map(nvPad2).join(':');
+    $('coRun').value = rid; $('coT0').value = hhmmss;
+    const msg = 'identifiant ' + rid + ', ' + n + ' visites prêtes, départ proposé à ' + hhmmss + ' (laissez le temps à B de se préparer, sinon recalculez)';
+    log('Course : ' + msg, 'ok'); report('  ' + msg);
+  });
+
+  function parseT0(s) {
+    const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec((s || '').trim());
+    if (!m) throw new Error('Heure de départ : format hh:mm:ss attendu');
+    const d = new Date(); d.setHours(+m[1], +m[2], +m[3], 0);
+    return d.getTime();
+  }
+  function readCourse() {
+    const rid = $('coRun').value.trim();
+    if (!/^[0-9a-f]{4}$/.test(rid)) throw new Error('Identifiant de course invalide (4 caractères hexadécimaux)');
+    return { rid, n: intVal('coN', 1, 200), per: intVal('coPer', 5, 300) * 1000 };
+  }
+
+  $('btnCoRun').onclick = () => run('Course : ' + ($('role').value === 'A' ? 'poste A' : 'poste B'), async () => {
+    const { rid, n, per } = readCourse();
+    const t0 = parseT0($('coT0').value);
+    if (t0 + (n - 1) * per < Date.now()) throw new Error('L\'heure de départ est déjà dépassée : préparez une nouvelle course');
+    const auteur = $('role').value === 'A' ? 'PA' : 'PB';
+    report('  course ' + rid + ', ' + n + ' tours, période ' + per / 1000 + ' s, départ ' + $('coT0').value + ', rôle ' + auteur);
+    $('progText').textContent = 'En attente de l\'heure de départ (' + $('coT0').value + ')…';
+    const res = await nvCourseRun(root, key, KEY_ID, 'course-' + rid, n, per, t0, auteur, 1500, ctl, makeTick('Tours'));
+    const ok = res.filter(r => !r.erreur), ko = res.filter(r => r.erreur);
+    const msg = ok.length + ' ajouts réussis, ' + ko.length + ' erreur(s) sur ' + res.length + ' tours';
+    log('Course (' + auteur + ') : ' + msg, ko.length ? 'ko' : 'ok'); report('  ' + msg);
+    ko.slice(0, 5).forEach(r => { log('  tour ' + r.i + ' : ' + r.erreur, 'ko'); report('  tour ' + r.i + ' : ' + r.erreur); });
+    showDist('Course ' + auteur + ' : durée de l\'enregistrement (lecture + écriture) (ms)', ok.map(r => r.ms));
+  });
+
+  $('btnCoAna').onclick = () => run('Course : analyse', async () => {
+    const { rid, n } = readCourse();
+    const rows = await nvCourseAnalyse(root, 'course-' + rid, n);
+    rows.forEach(r => report('  tour ' + nvPad2(r.i) + ' : ' + (r.absent ? 'visite absente' : r.n < 2 ? 'incomplet (' + r.n + ' ajout)' :
+      (r.bif ? 'BIFURCATION' : 'chaîne') + ' | écart NAS ' + r.ecart + ' ms | ' + r.detail)));
+    const s = nvCourseSummary(rows);
+    const tot = rows.filter(r => !r.absent && r.n >= 2).length, bifs = rows.filter(r => r.bif).length;
+    const head = bifs + ' bifurcation(s) sur ' + tot + ' tours complets' + (s.incomplets ? ' (' + s.incomplets + ' incomplet(s))' : '');
+    log('Course : ' + head, bifs ? 'mid' : 'ok'); report('  ' + head);
+    s.noms.forEach((nom, k) => {
+      const c = s.classes[k];
+      if (c.chaines + c.bifs) { const l = '  écart entre les deux enregistrements ' + nom + ' : ' + c.bifs + ' bifurcation(s), ' + c.chaines + ' chaîne(s)'; log(l); report(l); }
+    });
+  });
+
   // ---------- rapport ----------
   $('btnCopy').onclick = async () => {
     const r = $('report');
@@ -732,7 +1033,8 @@ async function nvAddVersion(root, key, keyId, ipp, visiteId, auteur) {
       const { ipp } = readInputs();
       const r = await nvReadVisit(root, key, ipp, $('visiteId').value.trim());
       log('Lecture : ' + r.res.courante + ' | listage ' + ms(r.ms.listage) + ', lecture ' + ms(r.ms.lecture), r.current ? 'ok' : 'ko');
-      if (r.res.bifurcations.length) log('BIFURCATION(S) : ' + JSON.stringify(r.res.bifurcations.map(b => 'v' + b.version + ' x' + b.fichiers.length)), 'mid');
+      if (r.bifs.length) log('BIFURCATION RÉELLE : ' + JSON.stringify(r.bifs.map(b => 'v' + b.version + ' x' + b.fichiers.length + ' fichiers lisibles')), 'ko');
+      else if (r.res.bifurcations.length) log('Numéros de version en double d\'après les noms, mais un seul fichier lisible par numéro (écriture interrompue ?) : ' + JSON.stringify(r.res.bifurcations.map(b => 'v' + b.version + ' x' + b.fichiers.length)), 'mid');
       if (r.res.lacunes.length) log('Versions manquantes : ' + r.res.lacunes.join(', '), 'mid');
       if (r.res.ignores.length) log('Fichiers ignorés : ' + r.res.ignores.join(', '), 'mid');
       r.corrupt.forEach(c => log('Fichier illisible : ' + c.nom + ' [' + c.code + ']', 'ko'));
