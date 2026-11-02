@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test ASR CPU (Whisper, navigateur)</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #6a7385;
+    --border: #d9dde5; --accent: #2b6cb0; --accent-text: #ffffff; --ok: #2f855a; --err: #c53030;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171d; --card: #1d222b; --text: #e6e9ef; --muted: #98a1b3;
+            --border: #333a47; --accent: #4f93dd; --accent-text: #0e1116; --ok: #5fc08a; --err: #f08080; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+          padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--muted); margin: 0 0 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  select, input[type=file] { font: inherit; color: var(--text); background: var(--bg);
+         border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  button { font: inherit; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+           border-radius: 6px; padding: 7px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.rec { background: var(--err); color: #fff; border-color: var(--err); }
+  .status { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 1.4em; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--err); }
+  progress { width: 100%; height: 8px; margin-top: 8px; }
+  audio { width: 100%; margin-top: 10px; }
+  textarea { width: 100%; min-height: 220px; font: inherit; color: var(--text); background: var(--bg);
+             border: 1px solid var(--border); border-radius: 6px; padding: 10px; resize: vertical; }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--text); }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  #timer { font-variant-numeric: tabular-nums; margin-left: 8px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Test ASR local (Whisper sur CPU, dans le navigateur)</h1>
+  <p class="sub">Transcription exécutée sur ta machine via WebAssembly. L'audio n'est envoyé nulle part ; seuls les fichiers du modèle sont téléchargés la première fois, puis mis en cache.</p>
+
+  <div class="card">
+    <h2>1. Modèle</h2>
+    <div class="row">
+      <label>Modèle
+        <select id="model">
+          <option value="onnx-community/whisper-tiny">tiny (≈ 40 M paramètres, très rapide, qualité limitée)</option>
+          <option value="onnx-community/whisper-base" selected>base (≈ 74 M)</option>
+          <option value="onnx-community/whisper-small">small (≈ 244 M, bon compromis)</option>
+          <option value="onnx-community/whisper-large-v3-turbo">large-v3-turbo (≈ 800 M, lourd sur CPU)</option>
+        </select>
+      </label>
+      <label>Précision
+        <select id="dtype">
+          <option value="q8" selected>q8 (quantifié, plus rapide)</option>
+          <option value="fp32">fp32 (plus précis, plus lent et lourd)</option>
+        </select>
+      </label>
+      <label>Langue
+        <select id="lang">
+          <option value="french" selected>Français</option>
+          <option value="english">Anglais</option>
+          <option value="">Détection automatique</option>
+        </select>
+      </label>
+      <label style="flex-direction:row;align-items:center;gap:6px;">
+        <input type="checkbox" id="ts"> Horodatages
+      </label>
+      <button id="btnLoad" class="primary">Charger le modèle</button>
+    </div>
+    <progress id="prog" max="100" value="0" hidden></progress>
+    <div class="status" id="status">Modèle non chargé.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. Audio</h2>
+    <div class="row">
+      <button id="btnRec" disabled>● Enregistrer</button><span id="timer"></span>
+      <label>ou fichier audio
+        <input type="file" id="file" accept="audio/*,video/*">
+      </label>
+    </div>
+    <audio id="player" controls hidden></audio>
+    <div class="row" style="margin-top:12px;">
+      <button id="btnRun" class="primary" disabled>Transcrire</button>
+    </div>
+    <div class="hint">Un seul locuteur, micro proche : c'est le cas d'usage « dictée ». Pour tester les cas difficiles (voix altérée, bruit de couloir), enregistre-les aussi.</div>
+  </div>
+
+  <div class="card">
+    <h2>3. Résultat</h2>
+    <textarea id="out" placeholder="La transcription apparaîtra ici (modifiable)."></textarea>
+    <div class="row" style="margin-top:10px;">
+      <button id="btnCopy">Copier</button>
+    </div>
+    <div class="stats">
+      <span>Durée audio : <b id="sAudio">–</b></span>
+      <span>Temps de calcul : <b id="sTime">–</b></span>
+      <span>Facteur temps réel : <b id="sRtf">–</b></span>
+      <span>Threads WASM : <b id="sThreads">–</b></span>
+    </div>
+    <div class="hint" id="isoHint"></div>
+  </div>
+</main>
+
+<script>
+/* ============================================================
+   WORKER (code du calcul, exécuté dans un thread séparé pour
+   ne pas figer la page pendant la transcription)
+   ============================================================ */
+const workerSource = `
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+
+let asr = null;
+let currentKey = null;
+
+self.onmessage = async (e) => {
+  const d = e.data;
+
+  if (d.type === 'load') {
+    try {
+      const key = d.model + '|' + d.dtype;
+      if (currentKey !== key) {
+        asr = null;
+        // Nombre de threads WASM : effectif seulement si la page est "cross-origin isolated"
+        env.backends.onnx.wasm.numThreads = d.threads;
+        asr = await pipeline('automatic-speech-recognition', d.model, {
+          device: 'wasm',
+          dtype: d.dtype,
+          progress_callback: (p) => self.postMessage({ type: 'progress', p })
+        });
+        currentKey = key;
+      }
+      self.postMessage({ type: 'ready' });
+    } catch (err) {
+      self.postMessage({ type: 'error', message: String(err && err.message || err) });
+    }
+  }
+
+  if (d.type === 'run') {
+    try {
+      const t0 = performance.now();
+      const opts = {
+        task: 'transcribe',
+        chunk_length_s: 30,      // découpage en fenêtres de 30 s (limite de Whisper)
+        stride_length_s: 5,      // recouvrement entre fenêtres
+        return_timestamps: d.timestamps
+      };
+      if (d.language) opts.language = d.language;
+      const out = await asr(d.audio, opts);
+      const seconds = (performance.now() - t0) / 1000;
+      self.postMessage({ type: 'result', out, seconds });
+    } catch (err) {
+      self.postMessage({ type: 'error', message: String(err && err.message || err) });
+    }
+  }
+};
+`;
+
+const worker = new Worker(
+  URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })),
+  { type: 'module' }
+);
+
+/* ============================================================
+   INTERFACE
+   ============================================================ */
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status'), prog = $('prog');
+let modelReady = false;
+let audioData = null;      // Float32Array mono 16 kHz
+let audioSeconds = 0;
+
+function setStatus(msg, cls = '') { statusEl.textContent = msg; statusEl.className = 'status ' + cls; }
+function fmt(s) { return s < 60 ? s.toFixed(1) + ' s' : Math.floor(s / 60) + ' min ' + Math.round(s % 60) + ' s'; }
+
+// Nombre de threads demandés. Sans "cross-origin isolation" (cas d'un fichier ouvert en local),
+// onnxruntime-web retombe sur 1 thread, ce qui rend la mesure pessimiste.
+const THREADS = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+$('sThreads').textContent = self.crossOriginIsolated ? THREADS : '1 (page non isolée)';
+if (!self.crossOriginIsolated) {
+  $('isoHint').textContent = "Page non « cross-origin isolated » : WebAssembly tourne sur un seul thread. Les temps affichés sont donc plus lents que ce que donnerait une implémentation native multi-cœurs (whisper.cpp, faster-whisper).";
+}
+
+const fileProgress = {};
+worker.onmessage = (e) => {
+  const d = e.data;
+
+  if (d.type === 'progress') {
+    const p = d.p;
+    if (p.status === 'progress' && p.file) {
+      fileProgress[p.file] = { loaded: p.loaded, total: p.total };
+      let L = 0, T = 0;
+      for (const k in fileProgress) { L += fileProgress[k].loaded; T += fileProgress[k].total; }
+      prog.hidden = false; prog.value = T ? (100 * L / T) : 0;
+      setStatus('Téléchargement du modèle : ' + (L / 1e6).toFixed(0) + ' / ' + (T / 1e6).toFixed(0) + ' Mo');
+    } else if (p.status === 'ready') {
+      setStatus('Initialisation du modèle…');
+    }
+  }
+
+  if (d.type === 'ready') {
+    modelReady = true;
+    prog.hidden = true;
+    setStatus('Modèle prêt.', 'ok');
+    $('btnLoad').disabled = false;
+    $('btnRec').disabled = false;
+    updateRunButton();
+  }
+
+  if (d.type === 'result') {
+    const out = d.out;
+    let text = '';
+    if ($('ts').checked && out.chunks) {
+      text = out.chunks.map(c => {
+        const [a, b] = c.timestamp;
+        return '[' + (a ?? 0).toFixed(1) + ' → ' + (b ?? a ?? 0).toFixed(1) + ' s] ' + c.text.trim();
+      }).join('\n');
+    } else {
+      text = (out.text || '').trim();
+    }
+    $('out').value = text;
+    $('sAudio').textContent = fmt(audioSeconds);
+    $('sTime').textContent = fmt(d.seconds);
+    $('sRtf').textContent = (d.seconds / audioSeconds).toFixed(2) + '× (< 1 = plus rapide que le temps réel)';
+    setStatus('Transcription terminée.', 'ok');
+    $('btnRun').disabled = false;
+    $('btnLoad').disabled = false;
+  }
+
+  if (d.type === 'error') {
+    setStatus('Erreur : ' + d.message, 'err');
+    prog.hidden = true;
+    $('btnLoad').disabled = false;
+    updateRunButton();
+  }
+};
+
+$('btnLoad').onclick = () => {
+  modelReady = false;
+  $('btnLoad').disabled = true; $('btnRun').disabled = true; $('btnRec').disabled = true;
+  for (const k in fileProgress) delete fileProgress[k];
+  setStatus('Chargement du modèle…');
+  worker.postMessage({
+    type: 'load',
+    model: $('model').value,
+    dtype: $('dtype').value,
+    threads: THREADS
+  });
+};
+
+function updateRunButton() { $('btnRun').disabled = !(modelReady && audioData); }
+
+/* ---------- Décodage audio -> mono 16 kHz ---------- */
+async function toMono16k(arrayBuffer) {
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  const buf = await ctx.decodeAudioData(arrayBuffer);
+  let data;
+  if (buf.numberOfChannels === 1) {
+    data = buf.getChannelData(0).slice();
+  } else {
+    const a = buf.getChannelData(0), b = buf.getChannelData(1);
+    data = new Float32Array(a.length);
+    for (let i = 0; i < a.length; i++) data[i] = (a[i] + b[i]) / 2;
+  }
+  ctx.close();
+  return data;
+}
+
+async function setAudioFromBlob(blob) {
+  try {
+    setStatus('Décodage de l’audio…');
+    const data = await toMono16k(await blob.arrayBuffer());
+    audioData = data;
+    audioSeconds = data.length / 16000;
+    const player = $('player');
+    player.src = URL.createObjectURL(blob);
+    player.hidden = false;
+    $('sAudio').textContent = fmt(audioSeconds);
+    setStatus('Audio prêt (' + fmt(audioSeconds) + ').', 'ok');
+    updateRunButton();
+  } catch (err) {
+    setStatus('Impossible de décoder cet audio : ' + err.message, 'err');
+  }
+}
+
+$('file').onchange = (e) => { const f = e.target.files[0]; if (f) setAudioFromBlob(f); };
+
+/* ---------- Enregistrement micro ---------- */
+let recorder = null, chunks = [], timerId = null, t0 = 0;
+$('btnRec').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  try {
+    // Désactiver les traitements automatiques du navigateur donne souvent un meilleur signal pour l'ASR.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true }
+    });
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(timerId); $('timer').textContent = '';
+      $('btnRec').textContent = '● Enregistrer'; $('btnRec').classList.remove('rec');
+      setAudioFromBlob(new Blob(chunks, { type: recorder.mimeType }));
+    };
+    recorder.start();
+    t0 = Date.now();
+    timerId = setInterval(() => { $('timer').textContent = fmt((Date.now() - t0) / 1000); }, 200);
+    $('btnRec').textContent = '■ Arrêter'; $('btnRec').classList.add('rec');
+  } catch (err) {
+    setStatus('Micro inaccessible : ' + err.message, 'err');
+  }
+};
+
+/* ---------- Lancer la transcription ---------- */
+$('btnRun').onclick = () => {
+  $('btnRun').disabled = true; $('btnLoad').disabled = true;
+  $('out').value = '';
+  setStatus('Transcription en cours…');
+  const copy = audioData.slice();          // copie, car le buffer est transféré au worker
+  worker.postMessage({
+    type: 'run',
+    audio: copy,
+    language: $('lang').value || null,
+    timestamps: $('ts').checked
+  }, [copy.buffer]);
+};
+
+$('btnCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('out').value); setStatus('Texte copié.', 'ok'); }
+  catch { $('out').select(); document.execCommand('copy'); }
+};
+</script>
+</body>
+</html>
