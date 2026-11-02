@@ -1,0 +1,22 @@
+{
+  "description": "v2 et v3 issues de la même v1 (base périmée) : bifurcation de numéros différents, version suivante 4",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "bifurcation",
+  "courante": null,
+  "tetes": [
+    "v0002_PA_20261101T090100Z_600002.enc",
+    "v0003_PB_20261101T090130Z_600003.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_600001.enc",
+    "v0002_PA_20261101T090100Z_600002.enc",
+    "v0003_PB_20261101T090130Z_600003.enc"
+  ],
+  "illisibles": [],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 4
+}

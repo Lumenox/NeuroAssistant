@@ -1,0 +1,15 @@
+{
+  "description": "Dossier sans aucun fichier .enc : état vide, version suivante 1",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "vide",
+  "courante": null,
+  "tetes": [],
+  "ordre": [],
+  "illisibles": [],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 1
+}

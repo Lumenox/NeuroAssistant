@@ -1,0 +1,52 @@
+{
+  "description": "Huit fichiers altérés (en-tête, IV, contenu, tag, troncatures) : tous illisibles avec leur code, la v1 reste la courante",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0001_RM_20261101T090000Z_f00001.enc",
+  "tetes": [
+    "v0001_RM_20261101T090000Z_f00001.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_f00001.enc"
+  ],
+  "illisibles": [
+    {
+      "nom": "v0002_RM_20261101T090102Z_f00002.enc",
+      "code": "BAD_MAGIC"
+    },
+    {
+      "nom": "v0003_RM_20261101T090103Z_f00003.enc",
+      "code": "UNSUPPORTED_VERSION"
+    },
+    {
+      "nom": "v0004_RM_20261101T090104Z_f00004.enc",
+      "code": "AUTH_FAILED"
+    },
+    {
+      "nom": "v0005_RM_20261101T090105Z_f00005.enc",
+      "code": "AUTH_FAILED"
+    },
+    {
+      "nom": "v0006_RM_20261101T090106Z_f00006.enc",
+      "code": "AUTH_FAILED"
+    },
+    {
+      "nom": "v0007_RM_20261101T090107Z_f00007.enc",
+      "code": "AUTH_FAILED"
+    },
+    {
+      "nom": "v0008_RM_20261101T090108Z_f00008.enc",
+      "code": "AUTH_FAILED"
+    },
+    {
+      "nom": "v0009_RM_20261101T090109Z_f00009.enc",
+      "code": "TRUNCATED"
+    }
+  ],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 10
+}

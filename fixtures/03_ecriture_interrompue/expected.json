@@ -1,0 +1,25 @@
+{
+  "description": "v2 est un fichier vide (écriture interrompue) ; v3 écrite ensuite depuis v1 : une tête (v3), v2 illisible, version suivante 4",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0003_RM_20261101T090200Z_b00003.enc",
+  "tetes": [
+    "v0003_RM_20261101T090200Z_b00003.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_b00001.enc",
+    "v0003_RM_20261101T090200Z_b00003.enc"
+  ],
+  "illisibles": [
+    {
+      "nom": "v0002_RM_20261101T090100Z_b00002.enc",
+      "code": "TRUNCATED"
+    }
+  ],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 4
+}

@@ -1,0 +1,32 @@
+{
+  "description": "Contenus incompatibles avec le dossier ou le nom (autre IPP, autre visite, autre numéro) : MISMATCH, ignorés",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0001_RM_20261101T090000Z_200001.enc",
+  "tetes": [
+    "v0001_RM_20261101T090000Z_200001.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_200001.enc"
+  ],
+  "illisibles": [
+    {
+      "nom": "v0002_RM_20261101T090100Z_200002.enc",
+      "code": "MISMATCH"
+    },
+    {
+      "nom": "v0003_RM_20261101T090200Z_200003.enc",
+      "code": "MISMATCH"
+    },
+    {
+      "nom": "v0004_RM_20261101T090300Z_200004.enc",
+      "code": "MISMATCH"
+    }
+  ],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 5
+}

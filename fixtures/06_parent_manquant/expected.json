@@ -1,0 +1,25 @@
+{
+  "description": "v3 cite un parent v2 absent du dossier : signalé, sans bloquer",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0003_RM_20261101T090200Z_e00003.enc",
+  "tetes": [
+    "v0003_RM_20261101T090200Z_e00003.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_e00001.enc",
+    "v0003_RM_20261101T090200Z_e00003.enc"
+  ],
+  "illisibles": [],
+  "ignores": [],
+  "parentsManquants": [
+    {
+      "nom": "v0003_RM_20261101T090200Z_e00003.enc",
+      "parent": "v0002_XX_20261101T090100Z_e00002"
+    }
+  ],
+  "versionSuivante": 4
+}

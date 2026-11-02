@@ -1,0 +1,21 @@
+{
+  "description": "Visite normale à 3 versions : une seule tête, version suivante 4",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0003_AB_20261101T090200Z_a00003.enc",
+  "tetes": [
+    "v0003_AB_20261101T090200Z_a00003.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_a00001.enc",
+    "v0002_RM_20261101T090100Z_a00002.enc",
+    "v0003_AB_20261101T090200Z_a00003.enc"
+  ],
+  "illisibles": [],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 4
+}

@@ -1,0 +1,3 @@
+# CLÉ DE TEST PUBLIQUE : ne jamais utiliser pour de vraies données.
+# key_id = 1
+1:jlby9fRxNgPKx3wzAqocmZxg9Nyv4yBaB0GzN87huxQ=

@@ -1,0 +1,24 @@
+{
+  "description": "v1 chiffrée avec la bonne clé, v2 avec une autre clé : v2 illisible (AUTH_FAILED)",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0001_RM_20261101T090000Z_100001.enc",
+  "tetes": [
+    "v0001_RM_20261101T090000Z_100001.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_100001.enc"
+  ],
+  "illisibles": [
+    {
+      "nom": "v0002_RM_20261101T090100Z_100002.enc",
+      "code": "AUTH_FAILED"
+    }
+  ],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 3
+}

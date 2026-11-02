@@ -1,0 +1,23 @@
+{
+  "description": "Fichiers parasites dans le dossier : ignorés, sans effet sur la visite",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0001_RM_20261101T090000Z_500001.enc",
+  "tetes": [
+    "v0001_RM_20261101T090000Z_500001.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_500001.enc"
+  ],
+  "illisibles": [],
+  "ignores": [
+    "Thumbs.db",
+    "notes.txt",
+    "v1_RM.enc"
+  ],
+  "parentsManquants": [],
+  "versionSuivante": 2
+}

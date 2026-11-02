@@ -1,0 +1,22 @@
+{
+  "description": "Bifurcation résolue par une v3 à deux parents : une seule tête (v3)",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0003_RM_20261101T090320Z_d00003.enc",
+  "tetes": [
+    "v0003_RM_20261101T090320Z_d00003.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_d00001.enc",
+    "v0002_PB_20261101T090100Z_d0aaaa.enc",
+    "v0002_PA_20261101T090100Z_d0bbbb.enc",
+    "v0003_RM_20261101T090320Z_d00003.enc"
+  ],
+  "illisibles": [],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 4
+}

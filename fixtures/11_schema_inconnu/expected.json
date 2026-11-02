@@ -1,0 +1,28 @@
+{
+  "description": "v2 au schema 2 (inconnu) et v3 sans schema : illisibles (UNSUPPORTED_VERSION, BAD_PAYLOAD)",
+  "ctx": {
+    "ipp": "9900000001",
+    "visite_id": "visite-ref-0001"
+  },
+  "etat": "normal",
+  "courante": "v0001_RM_20261101T090000Z_400001.enc",
+  "tetes": [
+    "v0001_RM_20261101T090000Z_400001.enc"
+  ],
+  "ordre": [
+    "v0001_RM_20261101T090000Z_400001.enc"
+  ],
+  "illisibles": [
+    {
+      "nom": "v0002_RM_20261101T090100Z_400002.enc",
+      "code": "UNSUPPORTED_VERSION"
+    },
+    {
+      "nom": "v0003_RM_20261101T090200Z_400003.enc",
+      "code": "BAD_PAYLOAD"
+    }
+  ],
+  "ignores": [],
+  "parentsManquants": [],
+  "versionSuivante": 4
+}
