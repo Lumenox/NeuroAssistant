@@ -15,6 +15,9 @@
  *
  * Règle : decryptVersion renvoie un objet intact ou lève une NVError.
  * Jamais d'objet partiel ou « réparé ».
+ *
+ * CONTENU (schema 1) et résolution par graphe : voir BLOC2_specification.md.
+ * validateContent / readEntry / resolveGraph / buildContent. Codes ajoutés : MISMATCH.
  * ========================================================================== */
 const NVCore = (() => {
   'use strict';
@@ -30,7 +33,7 @@ const NVCore = (() => {
 
   // ---------------------------------------------------------------- erreurs
   // Codes : TRUNCATED, BAD_MAGIC, UNSUPPORTED_VERSION, AUTH_FAILED,
-  //         BAD_PAYLOAD, BAD_INPUT, NO_CRYPTO
+  //         BAD_PAYLOAD, MISMATCH, BAD_INPUT, NO_CRYPTO
   class NVError extends Error {
     constructor(code, message) {
       super(message || code);
@@ -220,11 +223,188 @@ const NVCore = (() => {
     return { courante, bifurcations, ignores, lacunes };
   }
 
+  // ======================================================================
+  // CONTENU (schema 1) ET RÉSOLUTION PAR GRAPHE  (BLOC2_specification.md §5-§6)
+  // Rien ici ne touche au disque : l'appelant lit les octets et les passe.
+  // ======================================================================
+  const SCHEMA = 1;
+  const IPP_RE = /^[0-9]{10}$/;
+  const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+  const FID_RE = /^v[0-9]{4}_[A-Z0-9]{1,8}_[0-9]{8}T[0-9]{6}Z_[0-9a-f]{6}$/;
+  const KNOWN_KEYS = ['schema', 'ipp', 'visite_id', 'episode_id', 'version', 'parents', 'auteur',
+    'date_saisie', 'statut', 'motif', 'identite', 'modeles', 'items', 'redirige_vers', 'origine'];
+
+  const isPlain = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const bad = msg => new NVError('BAD_PAYLOAD', msg);
+
+  function fidOf(nom) {
+    const p = parseFileName(nom);
+    return p ? nom.slice(0, -4) : null;
+  }
+
+  // Valide la structure d'un contenu déchiffré. ctx (facultatif) = { ipp, visite_id, nom } issus du chemin
+  // et du nom du fichier : leur désaccord avec le contenu donne MISMATCH.
+  // Codes : BAD_PAYLOAD (structure), UNSUPPORTED_VERSION (schema inconnu), MISMATCH.
+  function validateContent(obj, ctx) {
+    if (!isPlain(obj)) throw bad('contenu : objet attendu');
+    if (!Number.isInteger(obj.schema)) throw bad('schema manquant ou invalide');
+    if (obj.schema !== SCHEMA) throw new NVError('UNSUPPORTED_VERSION', 'schema ' + obj.schema + ' non supporté');
+    if (typeof obj.ipp !== 'string' || !IPP_RE.test(obj.ipp)) throw bad('ipp : 10 chiffres attendus');
+    if (typeof obj.visite_id !== 'string' || !ID_RE.test(obj.visite_id)) throw bad('visite_id invalide');
+    if (typeof obj.episode_id !== 'string' || !ID_RE.test(obj.episode_id)) throw bad('episode_id invalide');
+    if (!Number.isInteger(obj.version) || obj.version < 1 || obj.version > 9999) throw bad('version invalide');
+    if (!Array.isArray(obj.parents)) throw bad('parents : tableau attendu');
+    const vus = new Set();
+    for (const f of obj.parents) {
+      if (typeof f !== 'string' || !FID_RE.test(f)) throw bad('parents : identifiant de fichier invalide');
+      if (vus.has(f)) throw bad('parents : doublon');
+      vus.add(f);
+      const pp = parseFileName(f + '.enc');
+      if (!pp) throw bad('parents : identifiant de fichier invalide');
+      if (pp.version >= obj.version) throw bad('parents : un parent doit avoir un numéro inférieur');
+    }
+    if (typeof obj.auteur !== 'string' || !/^[A-Z0-9]{1,8}$/.test(obj.auteur)) throw bad('auteur invalide');
+    if (typeof obj.date_saisie !== 'string' || isNaN(Date.parse(obj.date_saisie))) throw bad('date_saisie invalide');
+    if (obj.statut !== 'actif' && obj.statut !== 'annule') throw bad('statut : actif ou annule');
+    if (obj.statut === 'annule' && (typeof obj.motif !== 'string' || !obj.motif.trim())) throw bad('annule : motif obligatoire');
+    if (obj.motif !== undefined && obj.motif !== null && typeof obj.motif !== 'string') throw bad('motif : texte attendu');
+    if (obj.identite !== undefined) {
+      const i = obj.identite;
+      if (!isPlain(i) || typeof i.naissance !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(i.naissance) ||
+          typeof i.initiales !== 'string' || !i.initiales) throw bad('identite invalide');
+    }
+    if (obj.modeles !== undefined && !isPlain(obj.modeles)) throw bad('modeles : objet attendu');
+    if (obj.items !== undefined && !isPlain(obj.items)) throw bad('items : objet attendu');
+    if (obj.redirige_vers !== undefined) {
+      const r = obj.redirige_vers;
+      if (!isPlain(r) || !IPP_RE.test(r.ipp) || typeof r.visite_id !== 'string' || !ID_RE.test(r.visite_id)) throw bad('redirige_vers invalide');
+    }
+    if (obj.origine !== undefined) {
+      const o = obj.origine;
+      if (!isPlain(o) || !IPP_RE.test(o.ipp) || typeof o.visite_id !== 'string' || !ID_RE.test(o.visite_id) ||
+          typeof o.fid !== 'string' || !FID_RE.test(o.fid)) throw bad('origine invalide');
+    }
+    if (ctx) {
+      if (ctx.ipp !== undefined && ctx.ipp !== obj.ipp) throw new NVError('MISMATCH', 'ipp différent du dossier');
+      if (ctx.visite_id !== undefined && ctx.visite_id !== obj.visite_id) throw new NVError('MISMATCH', 'visite_id différent du dossier');
+      if (ctx.nom !== undefined) {
+        const p = parseFileName(ctx.nom);
+        if (!p) throw new NVError('MISMATCH', 'nom de fichier non conforme');
+        if (p.version !== obj.version) throw new NVError('MISMATCH', 'version différente du nom de fichier');
+      }
+    }
+    return obj;
+  }
+
+  // Déchiffre ET valide un fichier. Ne lève jamais : renvoie { nom, obj, keyId } ou { nom, code, message }.
+  async function readEntry({ nom, bytes, key, ipp, visite_id }) {
+    try {
+      const dec = await decryptVersion(bytes, key);
+      validateContent(dec.obj, { ipp, visite_id, nom });
+      return { nom, obj: dec.obj, keyId: dec.keyId };
+    } catch (e) {
+      return { nom, code: (e && e.code) || 'ERREUR', message: e && e.message };
+    }
+  }
+
+  // Ordre total du § 6.5 : horodatage du nom, puis alea. Indépendant de l'ordre d'entrée.
+  function compareNodes(a, b) {
+    const pa = parseFileName(a), pb = parseFileName(b);
+    if (pa.dateStr !== pb.dateStr) return pa.dateStr < pb.dateStr ? -1 : 1;
+    if (pa.alea !== pb.alea) return pa.alea < pb.alea ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+
+  // Résolution du § 6. entries : un élément par fichier listé,
+  //   lisible : { nom, obj }   illisible : { nom, code, message }   (voir readEntry)
+  // Sortie :
+  //   etat            'vide' | 'normal' | 'bifurcation'
+  //   courante        nom de la tête si etat 'normal', sinon null
+  //   tetes           noms des têtes, dans l'ordre du § 6.5
+  //   ordre           noms de tous les fichiers lisibles, dans l'ordre du § 6.5
+  //   illisibles      [{nom, code, message}]
+  //   ignores         noms qui ne respectent pas le format
+  //   parentsManquants[{nom, parent}]  parent absent ou illisible
+  //   parentsSuivants fid à mettre dans `parents` de la prochaine écriture (toutes les têtes)
+  //   versionSuivante 1 + plus haut numéro présent dans les NOMS (lisibles ou non), 1 si aucun
+  function resolveGraph(entries) {
+    const ignores = [], illisibles = [], lisibles = new Map();
+    let maxNom = 0;
+    const vus = new Set();
+    for (const en of entries || []) {
+      if (!en || vus.has(en.nom)) continue;
+      vus.add(en.nom);
+      const p = parseFileName(en.nom);
+      if (!p) { ignores.push(en.nom); continue; }
+      if (p.version > maxNom) maxNom = p.version;
+      if (en.obj) lisibles.set(en.nom, en.obj);
+      else illisibles.push({ nom: en.nom, code: en.code || 'ERREUR', message: en.message });
+    }
+    ignores.sort();
+    illisibles.sort((a, b) => (a.nom < b.nom ? -1 : a.nom > b.nom ? 1 : 0));
+
+    const ordre = [...lisibles.keys()].sort(compareNodes);
+    const fidToNom = new Map(ordre.map(n => [fidOf(n), n]));
+    const aDesEnfants = new Set();
+    const parentsManquants = [];
+    for (const nom of ordre) {
+      for (const f of lisibles.get(nom).parents) {
+        if (fidToNom.has(f)) aDesEnfants.add(f);
+        else parentsManquants.push({ nom, parent: f });
+      }
+    }
+    const tetes = ordre.filter(n => !aDesEnfants.has(fidOf(n)));
+    const etat = ordre.length === 0 ? 'vide' : tetes.length === 1 ? 'normal' : 'bifurcation';
+    return {
+      etat,
+      courante: etat === 'normal' ? tetes[0] : null,
+      tetes, ordre, illisibles, ignores, parentsManquants,
+      parentsSuivants: tetes.map(fidOf),
+      versionSuivante: maxNom + 1
+    };
+  }
+
+  // Construit le contenu d'une nouvelle version.
+  //   champs   : { ipp, visite_id, episode_id, auteur, statut?, motif?, identite?, modeles?, items?,
+  //                redirige_vers?, origine?, date? }
+  //   res      : résultat de resolveGraph pour le dossier (fournit version et parents)
+  //   precedent: objet de la version dont on part (ou null) : ses champs INCONNUS sont recopiés (§ 5).
+  // Les champs connus ne sont jamais recopiés implicitement (p. ex. redirige_vers disparaît à la restauration).
+  function buildContent(champs, res, precedent) {
+    if (!isPlain(champs)) throw new NVError('BAD_INPUT', 'champs : objet attendu');
+    if (!res || !Number.isInteger(res.versionSuivante) || !Array.isArray(res.parentsSuivants)) {
+      throw new NVError('BAD_INPUT', 'res : résultat de resolveGraph attendu');
+    }
+    const out = {};
+    if (isPlain(precedent)) {
+      for (const k of Object.keys(precedent)) if (!KNOWN_KEYS.includes(k)) out[k] = precedent[k];
+    }
+    out.schema = SCHEMA;
+    out.ipp = champs.ipp;
+    out.visite_id = champs.visite_id;
+    out.episode_id = champs.episode_id;
+    out.version = res.versionSuivante;
+    out.parents = res.parentsSuivants.slice();
+    out.auteur = champs.auteur;
+    out.date_saisie = (champs.date instanceof Date ? champs.date : new Date()).toISOString();
+    out.statut = champs.statut || 'actif';
+    if (champs.motif !== undefined) out.motif = champs.motif;
+    if (champs.identite !== undefined) out.identite = champs.identite;
+    if (champs.modeles !== undefined) out.modeles = champs.modeles;
+    out.items = champs.items !== undefined ? champs.items : {};
+    if (champs.redirige_vers !== undefined) out.redirige_vers = champs.redirige_vers;
+    if (champs.origine !== undefined) out.origine = champs.origine;
+    try { validateContent(out); }
+    catch (e) { throw new NVError('BAD_INPUT', 'contenu refusé : ' + e.message); }
+    return out;
+  }
+
   return {
     NVError, FORMAT_VERSION, HEADER_LEN, MIN_LEN,
     generateDataKey, exportKeyBase64, importKeyBase64,
     encryptVersion, decryptVersion,
     buildFileName, parseFileName, resolveVersions,
+    SCHEMA, fidOf, validateContent, readEntry, resolveGraph, buildContent,
     _bytesToBase64: bytesToBase64
   };
 })();
