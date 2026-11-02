@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lecteur de secours</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #d9dde5;
+  --accent: #1f5fbf; --ok: #19734b; --okbg: #e3f3ea; --warn: #8a5a00; --warnbg: #fdf0d2; --ko: #a52a2a; --kobg: #fbe3e3;
+  --code: #eef0f4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d; --panel: #1c2028; --text: #e6e9ef; --muted: #9aa3b2; --line: #333a47;
+    --accent: #6fa4f5; --ok: #6fd3a0; --okbg: #14301f; --warn: #f0c36a; --warnbg: #3a2e12; --ko: #f19a9a; --kobg: #3c1a1a;
+    --code: #262b35;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 1.35rem; margin: 0 0 4px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 0 0 14px; }
+textarea, input[type=text] { width: 100%; font: 13px/1.4 ui-monospace, Consolas, monospace; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+textarea { min-height: 70px; resize: vertical; }
+button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.muted { color: var(--muted); }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12.5px; border: 1px solid var(--line); }
+.tag.ok { background: var(--okbg); color: var(--ok); border-color: transparent; }
+.tag.warn { background: var(--warnbg); color: var(--warn); border-color: transparent; }
+.tag.ko { background: var(--kobg); color: var(--ko); border-color: transparent; }
+.banner { padding: 10px 12px; border-radius: 8px; margin: 8px 0; }
+.banner.ok { background: var(--okbg); color: var(--ok); }
+.banner.warn { background: var(--warnbg); color: var(--warn); }
+.banner.ko { background: var(--kobg); color: var(--ko); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+tr.clic { cursor: pointer; }
+tr.clic:hover td { background: var(--code); }
+td.mono, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+pre { background: var(--code); padding: 10px; border-radius: 6px; overflow: auto; max-height: 360px; font-size: 12.5px; margin: 6px 0; }
+details { margin: 6px 0; }
+summary { cursor: pointer; }
+.scroll { overflow-x: auto; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Lecteur de secours — visites neuro</h1>
+  <p class="sub">Lit les fichiers chiffrés sans l'application. Aucune connexion, aucune donnée envoyée, la clé n'est jamais enregistrée : fermer la page l'efface.</p>
+
+  <section>
+    <h2>1. Clé</h2>
+    <p class="muted" style="margin:0 0 6px">Collez la clé (base64), une par ligne. Format <span class="mono">1:AbC…=</span> pour une clé destinée à un <span class="mono">key_id</span> précis, ou la clé seule pour tous. Les lignes commençant par <span class="mono">#</span> sont ignorées.</p>
+    <textarea id="keyText" spellcheck="false" autocomplete="off" placeholder="1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx="></textarea>
+    <div class="row"><button id="btnKey" class="primary">Valider la clé</button><span id="keyStatus" class="muted"></span></div>
+    <div id="keyInfos" class="muted"></div>
+  </section>
+
+  <section>
+    <h2>2. Dossier à lire</h2>
+    <p class="muted" style="margin:0 0 6px">Choisissez un dossier de visite, un dossier patient, ou le dossier <span class="mono">patients</span> entier. Les fichiers sont lus sur place, rien n'est copié.</p>
+    <input type="file" id="dirInput" webkitdirectory multiple>
+    <div id="dirSummary" class="muted" style="margin-top:6px"></div>
+    <div id="listBox" class="hidden">
+      <div class="row"><input type="text" id="filter" placeholder="Filtrer par chemin (IPP, identifiant de visite…)" style="max-width:420px"></div>
+      <div class="scroll"><table><thead><tr><th>Dossier</th><th>Fichiers</th><th></th></tr></thead><tbody id="visitRows"></tbody></table></div>
+      <div id="listMore" class="muted"></div>
+    </div>
+  </section>
+
+  <section id="detail" class="hidden">
+    <h2>3. Visite</h2>
+    <div id="detailBody"></div>
+  </section>
+
+  <section>
+    <h2>Export complet</h2>
+    <p class="muted" style="margin:0 0 6px">Déchiffre tous les dossiers listés ci-dessus et écrit un fichier JSON Lignes (une ligne par visite, toutes les versions lisibles). <b>Ce fichier est en clair</b> : à ranger comme les données elles-mêmes, puis à détruire.</p>
+    <div class="row"><button id="btnExport" disabled>Exporter (JSON Lignes)</button><button id="btnStop" disabled>Arrêter</button><span id="exportStatus" class="muted"></span></div>
+  </section>
+
+  <section>
+    <details id="selfTest">
+      <summary><b>Vérifier ce lecteur avec les jeux de référence</b></summary>
+      <p class="muted">Choisissez le dossier des jeux de référence (celui qui contient <span class="mono">TEST_KEY.txt</span> et les dossiers <span class="mono">01_normale</span>, …). Le lecteur compare son résultat à celui attendu pour chaque cas.</p>
+      <input type="file" id="refInput" webkitdirectory multiple>
+      <div id="refSummary" class="row"></div>
+      <div id="refResults"></div>
+    </details>
+  </section>
+</main>
+
+<script src="core.js"></script>
+<script id="layer">
+'use strict';
+// ----------------------------------------------------------------------------------------------------
+// Couche de lecture (sans DOM, testable) : clés, regroupement des fichiers par dossier, lecture, auto-test.
+// ----------------------------------------------------------------------------------------------------
+const RS_IPP_RE = /^[0-9]{10}$/;
+const RS_CODES = {
+  TRUNCATED: "fichier vide ou trop court (écriture interrompue ?)",
+  BAD_MAGIC: "ce n'est pas un fichier de visite",
+  UNSUPPORTED_VERSION: "format ou schéma plus récent que ce lecteur",
+  AUTH_FAILED: "mauvaise clé, ou fichier altéré",
+  BAD_PAYLOAD: "contenu déchiffré invalide",
+  MISMATCH: "ne correspond pas à son nom ou à son dossier",
+  NO_KEY: "aucune clé fournie pour ce key_id",
+  ERREUR: "erreur de lecture"
+};
+
+function rsHex(bytes) { return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); }
+
+// Texte -> { byId: Map(key_id -> CryptoKey), any: CryptoKey|null, infos: [{ligne, id, empreinte}] }
+async function rsParseKeys(text) {
+  const byId = new Map(); let any = null; const infos = [];
+  const lignes = String(text || '').split(/\r?\n/);
+  for (let i = 0; i < lignes.length; i++) {
+    const l = lignes[i].trim();
+    if (!l || l.startsWith('#')) continue;
+    let id = null, b64 = l;
+    const m = /^([0-9]{1,5}):(.+)$/.exec(l);
+    if (m) { id = parseInt(m[1], 10); b64 = m[2].trim(); }
+    if (id !== null && id > 65535) throw new Error('ligne ' + (i + 1) + ' : key_id supérieur à 65535');
+    let raw;
+    try { const bin = atob(b64); raw = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) raw[k] = bin.charCodeAt(k); }
+    catch (e) { throw new Error('ligne ' + (i + 1) + " : base64 invalide"); }
+    if (raw.length !== 32) throw new Error('ligne ' + (i + 1) + ' : une clé fait 32 octets (' + raw.length + ' trouvés)');
+    const key = await NVCore.importKeyBase64(b64);
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', raw));
+    infos.push({ ligne: i + 1, id, empreinte: rsHex(h.subarray(0, 4)) });
+    if (id === null) any = key; else byId.set(id, key);
+  }
+  if (!infos.length) throw new Error('aucune clé trouvée');
+  return { byId, any, infos };
+}
+
+// Clés à essayer pour un fichier, d'après le key_id lu dans son en-tête.
+// key_id connu : cette clé (puis la clé « pour tous » si elle existe). key_id inconnu (ou en-tête abîmé) :
+// toutes les clés fournies, car un en-tête altéré ne doit pas rendre un fichier introuvable pour le secours.
+function rsCandidates(bytes, keys) {
+  const out = [];
+  if (bytes.length >= 7) {
+    const id = (bytes[5] << 8) | bytes[6];
+    if (keys.byId.has(id)) out.push(keys.byId.get(id));
+  }
+  if (keys.any && !out.includes(keys.any)) out.push(keys.any);
+  if (!out.length) for (const k of keys.byId.values()) out.push(k);
+  return out;
+}
+
+// Fichiers [{path, file}] -> dossiers [{dir, ipp, visiteId, files:[{nom, file}]}] triés.
+function rsGroup(items) {
+  const g = new Map();
+  for (const it of items) {
+    const seg = it.path.split('/');
+    const nom = seg.pop();
+    const dir = seg.join('/');
+    if (!g.has(dir)) g.set(dir, []);
+    g.get(dir).push({ nom, file: it.file });
+  }
+  const out = [];
+  for (const [dir, files] of g) {
+    const seg = dir.split('/');
+    const visiteId = seg[seg.length - 1] || '';
+    const parent = seg.length > 1 ? seg[seg.length - 2] : '';
+    files.sort((a, b) => (a.nom < b.nom ? -1 : a.nom > b.nom ? 1 : 0));
+    out.push({ dir, visiteId, ipp: RS_IPP_RE.test(parent) ? parent : null, files });
+  }
+  out.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
+  return out;
+}
+
+// Lit et résout un dossier. ctx = { ipp, visite_id } pour exiger la concordance (jeux de référence), ou null (secours : tolérant).
+async function rsLoadVisit(visit, keys, ctx) {
+  const entries = [];
+  for (const f of visit.files) {
+    if (!NVCore.parseFileName(f.nom)) { entries.push({ nom: f.nom }); continue; }
+    let bytes;
+    try { bytes = new Uint8Array(await f.file.arrayBuffer()); }
+    catch (e) { entries.push({ nom: f.nom, code: 'ERREUR', message: (e && e.message) || 'lecture impossible' }); continue; }
+    const candidats = rsCandidates(bytes, keys);
+    if (!candidats.length) { entries.push({ nom: f.nom, code: 'NO_KEY', message: RS_CODES.NO_KEY }); continue; }
+    let r = null;
+    for (const key of candidats) {
+      r = await NVCore.readEntry({ nom: f.nom, bytes, key, ipp: ctx ? ctx.ipp : undefined, visite_id: ctx ? ctx.visite_id : undefined });
+      if (r.obj) break;
+      if (r.code !== 'AUTH_FAILED') break;     // structure invalide : une autre clé n'y changera rien
+    }
+    entries.push(r);
+  }
+  const res = NVCore.resolveGraph(entries);
+  const objets = new Map(entries.filter(e => e.obj).map(e => [e.nom, e.obj]));
+  // Avertissements (le lecteur ne masque jamais un fichier lisible à cause d'une discordance de chemin).
+  const avert = [];
+  const couples = new Set([...objets.values()].map(o => o.ipp + ' / ' + o.visite_id));
+  if (couples.size > 1) avert.push('Ce dossier mélange plusieurs visites : ' + [...couples].join(' ; '));
+  if (!ctx) {
+    for (const o of objets.values()) {
+      if (visit.visiteId && o.visite_id !== visit.visiteId) { avert.push("L'identifiant de visite dans les fichiers (" + o.visite_id + ") diffère du nom du dossier (" + visit.visiteId + ')'); break; }
+    }
+    for (const o of objets.values()) {
+      if (visit.ipp && o.ipp !== visit.ipp) { avert.push("L'IPP dans les fichiers (" + o.ipp + ') diffère du dossier (' + visit.ipp + ')'); break; }
+    }
+  }
+  return { entries, res, objets, avert };
+}
+
+// Compare la résolution d'un dossier de référence à expected.json. Renvoie { ok, ecarts:[...] }.
+async function rsCheckCase(visit, keys) {
+  const fExp = visit.files.find(f => f.nom === 'expected.json');
+  if (!fExp) return null;
+  const exp = JSON.parse(await fExp.file.text());
+  // expected.json est le fichier de métadonnées du test, pas un fichier de la visite.
+  const visite = Object.assign({}, visit, { files: visit.files.filter(f => f.nom !== 'expected.json') });
+  const lu = await rsLoadVisit(visite, keys, exp.ctx);
+  const r = lu.res;
+  const obtenu = {
+    etat: r.etat, courante: r.courante, tetes: r.tetes, ordre: r.ordre,
+    illisibles: r.illisibles.map(x => ({ nom: x.nom, code: x.code })), ignores: r.ignores,
+    parentsManquants: r.parentsManquants, versionSuivante: r.versionSuivante
+  };
+  const ecarts = [];
+  for (const k of Object.keys(obtenu)) {
+    if (JSON.stringify(obtenu[k]) !== JSON.stringify(exp[k])) ecarts.push(k + ' : attendu ' + JSON.stringify(exp[k]) + ', obtenu ' + JSON.stringify(obtenu[k]));
+  }
+  // Le contenu lisible de chaque tête doit aussi être un objet valide.
+  for (const t of r.tetes) { if (!lu.objets.get(t)) ecarts.push('tête illisible : ' + t); }
+  return { nom: visit.visiteId, description: exp.description, ok: ecarts.length === 0, ecarts };
+}
+
+// Dossier de référence complet : cherche TEST_KEY.txt puis vérifie chaque cas.
+async function rsSelfTest(items) {
+  const visits = rsGroup(items);
+  const fKey = visits.flatMap(v => v.files.map(f => ({ v, f }))).find(x => x.f.nom === 'TEST_KEY.txt');
+  if (!fKey) throw new Error('TEST_KEY.txt introuvable dans le dossier choisi');
+  const keys = await rsParseKeys(await fKey.f.file.text());
+  const out = [];
+  for (const v of visits) {
+    const c = await rsCheckCase(v, keys);
+    if (c) out.push(c);
+  }
+  if (!out.length) throw new Error('aucun cas (expected.json) trouvé dans le dossier choisi');
+  return out;
+}
+
+// Une ligne JSON par visite : toutes les versions lisibles, dans l'ordre du § 6.5 de la spécification.
+async function rsExportVisit(visit, keys) {
+  const lu = await rsLoadVisit(visit, keys, null);
+  const r = lu.res;
+  return JSON.stringify({
+    chemin: visit.dir, etat: r.etat, tetes: r.tetes, courante: r.courante,
+    versions: r.ordre.map(nom => ({ fichier: nom, contenu: lu.objets.get(nom) })),
+    illisibles: r.illisibles, ignores: r.ignores, parentsManquants: r.parentsManquants, avertissements: lu.avert
+  });
+}
+</script>
+
+<script>
+'use strict';
+// ----------------------------------------------------------------------------------------------------
+// Interface
+// ----------------------------------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+function el(tag, attrs, ...enfants) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k of Object.keys(attrs)) { if (k === 'class') e.className = attrs[k]; else if (k === 'onclick') e.onclick = attrs[k]; else e.setAttribute(k, attrs[k]); }
+  for (const c of enfants) { if (c === null || c === undefined) continue; e.append(c.nodeType ? c : document.createTextNode(String(c))); }
+  return e;
+}
+const sleepTick = () => new Promise(r => setTimeout(r, 0));
+const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString('fr-FR'); };
+
+let KEYS = null, VISITS = [], STOP = false;
+const MAX_ROWS = 400;
+
+async function validerCle() {
+  $('keyStatus').textContent = ''; $('keyInfos').textContent = '';
+  try {
+    KEYS = await rsParseKeys($('keyText').value);
+    $('keyStatus').textContent = KEYS.infos.length + ' clé(s) valide(s)';
+    $('keyInfos').textContent = 'Empreintes : ' + KEYS.infos.map(i => (i.id === null ? 'toutes' : 'key_id ' + i.id) + ' → ' + i.empreinte).join(' ; ') + '. Comparez-les à celles notées avec votre sauvegarde.';
+  } catch (e) {
+    KEYS = null;
+    $('keyStatus').textContent = 'Clé refusée : ' + (e && e.message ? e.message : e);
+  }
+  majBoutons();
+}
+
+function majBoutons() { $('btnExport').disabled = !(KEYS && VISITS.length); }
+
+function dessinerListe() {
+  const f = $('filter').value.trim().toLowerCase();
+  const tbody = $('visitRows'); tbody.replaceChildren();
+  const visibles = VISITS.filter(v => !f || v.dir.toLowerCase().includes(f));
+  for (const v of visibles.slice(0, MAX_ROWS)) {
+    const nbEnc = v.files.filter(x => NVCore.parseFileName(x.nom)).length;
+    tbody.append(el('tr', { class: 'clic', onclick: () => ouvrirVisite(v) },
+      el('td', { class: 'mono' }, v.dir || '(dossier choisi)'), el('td', null, nbEnc + (nbEnc !== v.files.length ? ' (+' + (v.files.length - nbEnc) + ' autres)' : '')),
+      el('td', null, 'ouvrir')));
+  }
+  $('listMore').textContent = visibles.length > MAX_ROWS ? (visibles.length - MAX_ROWS) + ' dossiers de plus : affinez le filtre.' : (visibles.length + ' dossier(s)');
+}
+
+$('dirInput').addEventListener('change', () => {
+  const fichiers = Array.from($('dirInput').files).map(file => ({ path: file.webkitRelativePath || file.name, file }));
+  VISITS = rsGroup(fichiers).filter(v => v.files.some(f => NVCore.parseFileName(f.nom)));
+  const nbEnc = VISITS.reduce((n, v) => n + v.files.filter(f => NVCore.parseFileName(f.nom)).length, 0);
+  $('dirSummary').textContent = VISITS.length ? VISITS.length + ' dossier(s) de visite, ' + nbEnc + ' fichier(s) .enc' : 'Aucun fichier de visite (.enc) trouvé dans ce dossier.';
+  $('listBox').classList.toggle('hidden', !VISITS.length);
+  $('detail').classList.add('hidden');
+  dessinerListe(); majBoutons();
+  if (VISITS.length === 1) ouvrirVisite(VISITS[0]);
+});
+$('filter').addEventListener('input', dessinerListe);
+$('btnKey').addEventListener('click', validerCle);
+
+async function ouvrirVisite(v) {
+  if (!KEYS) { await validerCle(); if (!KEYS) { alert("Validez d'abord la clé (étape 1)."); return; } }
+  const lu = await rsLoadVisit(v, KEYS, null);
+  const r = lu.res;
+  const box = $('detailBody'); box.replaceChildren();
+  $('detail').classList.remove('hidden');
+
+  box.append(el('div', { class: 'mono muted' }, v.dir || '(dossier choisi)'));
+  if (r.etat === 'vide') box.append(el('div', { class: 'banner warn' }, 'Aucune version lisible dans ce dossier.' + (r.illisibles.length ? ' ' + r.illisibles.length + ' fichier(s) illisible(s), voir ci-dessous.' : '')));
+  else if (r.etat === 'normal') box.append(el('div', { class: 'banner ok' }, 'Une seule version courante : ' + r.courante));
+  else box.append(el('div', { class: 'banner ko' }, 'BIFURCATION : ' + r.tetes.length + ' versions courantes parallèles (modifications faites sans connaître l\'autre). Rien n\'est perdu ; toutes sont affichées ci-dessous.'));
+  for (const a of lu.avert) box.append(el('div', { class: 'banner warn' }, a));
+
+  if (r.ordre.length) {
+    const tb = el('tbody');
+    for (const nom of r.ordre) {
+      const o = lu.objets.get(nom), p = NVCore.parseFileName(nom);
+      const tete = r.tetes.includes(nom);
+      tb.append(el('tr', null,
+        el('td', null, 'v' + o.version), el('td', null, o.auteur), el('td', null, fmtDate(o.date_saisie)),
+        el('td', null, el('span', { class: 'tag ' + (o.statut === 'annule' ? 'warn' : 'ok') }, o.statut === 'annule' ? 'annulée' : 'active')),
+        el('td', { class: 'mono' }, o.parents.length ? o.parents.map(f => f.slice(0, 5) + '…' + f.slice(-6)).join(', ') : '—'),
+        el('td', null, tete ? el('span', { class: 'tag ' + (r.etat === 'bifurcation' ? 'ko' : 'ok') }, 'tête') : ''),
+        el('td', { class: 'mono' }, p.dateStr + ' ' + p.alea)));
+    }
+    box.append(el('h2', { style: 'margin-top:12px' }, 'Versions lisibles (de la plus ancienne à la plus récente)'),
+      el('div', { class: 'scroll' }, el('table', null,
+        el('thead', null, el('tr', null, ...['Version', 'Auteur', 'Saisie', 'Statut', 'Parents', '', 'Fichier'].map(t => el('th', null, t)))), tb)));
+  }
+  if (r.illisibles.length) {
+    const tb = el('tbody');
+    for (const x of r.illisibles) tb.append(el('tr', null, el('td', { class: 'mono' }, x.nom), el('td', null, el('span', { class: 'tag ko' }, x.code)), el('td', null, RS_CODES[x.code] || x.message || '')));
+    box.append(el('h2', { style: 'margin-top:12px' }, 'Fichiers illisibles (ignorés pour la résolution)'), el('div', { class: 'scroll' }, el('table', null, tb)));
+  }
+  if (r.ignores.length) box.append(el('div', { class: 'muted', style: 'margin-top:8px' }, 'Fichiers ignorés (nom non conforme) : ' + r.ignores.join(', ')));
+  if (r.parentsManquants.length) box.append(el('div', { class: 'banner warn' }, 'Parent introuvable : ' + r.parentsManquants.map(x => x.nom.slice(0, 5) + ' → ' + x.parent).join(' ; ')));
+
+  box.append(el('h2', { style: 'margin-top:12px' }, r.tetes.length > 1 ? 'Contenu de chaque version courante' : 'Contenu de la version courante'));
+  for (const nom of r.tetes) {
+    const o = lu.objets.get(nom);
+    const texte = JSON.stringify(o, null, 2);
+    box.append(el('details', { open: '' }, el('summary', null, 'v' + o.version + ' — ' + o.auteur + ' — ' + fmtDate(o.date_saisie)),
+      el('div', { class: 'row' },
+        el('button', { onclick: async ev => { try { await navigator.clipboard.writeText(texte); ev.target.textContent = 'Copié'; } catch (e) { ev.target.textContent = 'Copie impossible'; } } }, 'Copier le JSON'),
+        el('button', { onclick: () => telecharger([texte], nom.replace(/\.enc$/, '') + '.json', 'application/json') }, 'Télécharger')),
+      el('pre', null, texte)));
+  }
+  $('detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function telecharger(parts, nomFichier, type) {
+  const url = URL.createObjectURL(new Blob(parts, { type }));
+  const a = el('a', { href: url, download: nomFichier }); document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+$('btnExport').addEventListener('click', async () => {
+  if (!KEYS || !VISITS.length) return;
+  if (!confirm("Le fichier exporté contiendra les données en CLAIR. Continuer ?")) return;
+  STOP = false; $('btnExport').disabled = true; $('btnStop').disabled = false;
+  const parts = []; let n = 0, err = 0;
+  for (const v of VISITS) {
+    if (STOP) break;
+    try { parts.push(await rsExportVisit(v, KEYS) + '\n'); } catch (e) { err++; parts.push(JSON.stringify({ chemin: v.dir, erreur: (e && e.message) || String(e) }) + '\n'); }
+    n++;
+    if (n % 20 === 0) { $('exportStatus').textContent = n + ' / ' + VISITS.length; await sleepTick(); }
+  }
+  $('exportStatus').textContent = (STOP ? 'Arrêté : ' : 'Terminé : ') + n + ' / ' + VISITS.length + ' dossier(s)' + (err ? ', ' + err + ' erreur(s)' : '');
+  if (n) telecharger(parts, 'export_secours_' + new Date().toISOString().slice(0, 10) + '.jsonl', 'application/x-ndjson');
+  $('btnStop').disabled = true; majBoutons();
+});
+$('btnStop').addEventListener('click', () => { STOP = true; });
+
+$('refInput').addEventListener('change', async () => {
+  const box = $('refResults'); box.replaceChildren(); $('refSummary').replaceChildren();
+  const fichiers = Array.from($('refInput').files).map(file => ({ path: file.webkitRelativePath || file.name, file }));
+  try {
+    const res = await rsSelfTest(fichiers);
+    const ko = res.filter(r => !r.ok).length;
+    $('refSummary').append(el('div', { class: 'banner ' + (ko ? 'ko' : 'ok'), id: 'refVerdict', style: 'width:100%' },
+      ko ? ko + ' CAS EN ÉCHEC sur ' + res.length + ' : ne pas se fier à ce lecteur.' : 'Tous les cas de référence sont conformes (' + res.length + '/' + res.length + ').'));
+    const tb = el('tbody');
+    for (const r of res) tb.append(el('tr', null, el('td', { class: 'mono' }, r.nom), el('td', null, el('span', { class: 'tag ' + (r.ok ? 'ok' : 'ko') }, r.ok ? 'conforme' : 'ÉCART')),
+      el('td', null, r.description, ...r.ecarts.map(e => el('div', { class: 'mono' }, e)))));
+    box.append(el('div', { class: 'scroll' }, el('table', null, tb)));
+  } catch (e) {
+    $('refSummary').append(el('div', { class: 'banner ko', id: 'refVerdict', style: 'width:100%' }, 'Vérification impossible : ' + ((e && e.message) || e)));
+  }
+});
+
+if (!(globalThis.crypto && globalThis.crypto.subtle)) {
+  document.querySelector('main').prepend(el('div', { class: 'banner ko' }, "WebCrypto indisponible : ouvrez cette page dans Chrome ou Edge (fichier local ou https)."));
+}
+</script>
+</body>
+</html>
