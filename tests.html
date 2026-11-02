@@ -286,6 +286,222 @@ test('17c. Le même nom présent deux fois dans la liste n\'est pas une bifurcat
   assertEq(r.bifurcations, []);
 });
 
+// ===================== tests : contenu et graphe (Bloc 2) =====================
+// Cas de référence du § 15 de BLOC2_specification.md. Numérotation B2-xx ; le cas du § 15 est indiqué entre crochets.
+section('Contenu et graphe (Bloc 2)');
+
+const G_IPP = '9912345678', G_VID = 'visite-0001', G_EPI = 'epi-0001';
+function rec(version, parents, over) {
+  return Object.assign({ schema: 1, ipp: G_IPP, visite_id: G_VID, episode_id: G_EPI, version, parents,
+    auteur: 'RM', date_saisie: '2026-10-27T22:03:00.000Z', statut: 'actif', items: {} }, over || {});
+}
+const gname = (version, auteur, sec, alea) => NVCore.buildFileName({ version, auteur,
+  date: new Date(Date.UTC(2026, 9, 27, 22, 3, sec)), alea });
+const fid = n => NVCore.fidOf(n);
+let _gkey = null;
+async function gkey() { if (!_gkey) _gkey = await NVCore.generateDataKey(); return _gkey; }
+// Chiffre puis relit via readEntry, comme le ferait l'application.
+async function gentry(nom, obj, opts) {
+  const key = await gkey();
+  const bytes = (opts && opts.bytes) || await NVCore.encryptVersion(obj, key, 1);
+  return NVCore.readEntry({ nom, bytes, key: (opts && opts.key) || key, ipp: G_IPP, visite_id: G_VID });
+}
+function assertCode(e, code) { assert(!e.obj && e.code === code, 'attendu ' + code + ', obtenu ' + (e.obj ? 'lisible' : e.code)); }
+
+// Noms utilisés : v1 puis v2 (deux auteurs, même seconde), etc.
+const N1 = gname(1, 'RM', 0, 'aaaaaa');
+const N2a = gname(2, 'PA', 10, 'bbbbbb');
+const N2b = gname(2, 'PB', 10, 'a0a0a0');
+const N3 = gname(3, 'RM', 20, 'cccccc');
+
+test('B2-01 [1] Visite normale à 3 versions : une tête, version suivante 4', async () => {
+  const e = [await gentry(N1, rec(1, [])), await gentry(gname(2, 'RM', 10, 'bbbbbb'), rec(2, [fid(N1)])),
+    await gentry(N3, rec(3, [fid(gname(2, 'RM', 10, 'bbbbbb'))]))];
+  const r = NVCore.resolveGraph(e);
+  assertEq(r.etat, 'normal'); assertEq(r.courante, N3); assertEq(r.tetes, [N3]);
+  assertEq(r.versionSuivante, 4); assertEq(r.parentsSuivants, [fid(N3)]);
+  assertEq(r.illisibles, []); assertEq(r.parentsManquants, []);
+});
+
+test('B2-02 [2] Visite vide : état vide, version suivante 1', () => {
+  const r = NVCore.resolveGraph([]);
+  assertEq(r.etat, 'vide'); assertEq(r.courante, null); assertEq(r.tetes, []);
+  assertEq(r.versionSuivante, 1); assertEq(r.parentsSuivants, []);
+  assertEq(NVCore.resolveGraph(null).etat, 'vide');
+});
+
+test('B2-03 [3] Écriture interrompue (fichier vide) : ignoré, numéro non réutilisé', async () => {
+  const vide = await gentry(N2a, null, { bytes: new Uint8Array(0) });
+  assertCode(vide, 'TRUNCATED');
+  // a) seule la v1 est lisible, la v2 est vide : courante = v1, suivante = 3
+  const r1 = NVCore.resolveGraph([await gentry(N1, rec(1, [])), vide]);
+  assertEq(r1.etat, 'normal'); assertEq(r1.courante, N1); assertEq(r1.versionSuivante, 3);
+  assertEq(r1.illisibles.map(x => [x.nom, x.code]), [[N2a, 'TRUNCATED']]);
+  // b) la v3 a été écrite ensuite avec pour parent la v1 : une seule tête, aucune bifurcation
+  const r2 = NVCore.resolveGraph([await gentry(N1, rec(1, [])), vide, await gentry(N3, rec(3, [fid(N1)]))]);
+  assertEq(r2.etat, 'normal'); assertEq(r2.courante, N3); assertEq(r2.versionSuivante, 4);
+});
+
+test('B2-03b Dossier ne contenant que des fichiers illisibles : vide, mais numéro suivant tient compte des noms', async () => {
+  const r = NVCore.resolveGraph([await gentry(N2a, null, { bytes: new Uint8Array(0) })]);
+  assertEq(r.etat, 'vide'); assertEq(r.illisibles.length, 1); assertEq(r.versionSuivante, 3);
+});
+
+test('B2-04 [4] Bifurcation : deux v2 de même parent = deux têtes, ordre déterministe', async () => {
+  const e = [await gentry(N1, rec(1, [])), await gentry(N2a, rec(2, [fid(N1)], { auteur: 'PA' })),
+    await gentry(N2b, rec(2, [fid(N1)], { auteur: 'PB' }))];
+  const r = NVCore.resolveGraph(e);
+  assertEq(r.etat, 'bifurcation'); assertEq(r.courante, null);
+  assertEq(r.tetes, [N2b, N2a]);                        // même seconde : départage par alea (a0a0a0 < bbbbbb)
+  assertEq(r.parentsSuivants, [fid(N2b), fid(N2a)]);
+  assertEq(r.versionSuivante, 3);
+});
+
+test('B2-04b L\'horodatage prime sur l\'alea dans l\'ordre entre branches', async () => {
+  const tard = gname(2, 'PA', 12, '000001'), tot = gname(2, 'PB', 11, 'ffffff');
+  const r = NVCore.resolveGraph([await gentry(N1, rec(1, [])), await gentry(tard, rec(2, [fid(N1)])),
+    await gentry(tot, rec(2, [fid(N1)]))]);
+  assertEq(r.tetes, [tot, tard]);
+});
+
+test('B2-04c Résultat identique quel que soit l\'ordre des entrées (20 mélanges)', async () => {
+  const e = [await gentry(N1, rec(1, [])), await gentry(N2a, rec(2, [fid(N1)])), await gentry(N2b, rec(2, [fid(N1)])),
+    await gentry(N3, rec(3, [fid(N1)])), await gentry('notes.txt', null, { bytes: new Uint8Array(0) })];
+  const ref = JSON.stringify(NVCore.resolveGraph(e));
+  for (let s = 1; s <= 20; s++) assert(JSON.stringify(NVCore.resolveGraph(shuffled(e, s))) === ref, 'résultat différent au mélange ' + s);
+});
+
+test('B2-04d Base périmée : v2 et v3 issues de la même v1 = bifurcation de numéros différents', async () => {
+  const r = NVCore.resolveGraph([await gentry(N1, rec(1, [])), await gentry(N2a, rec(2, [fid(N1)])),
+    await gentry(N3, rec(3, [fid(N1)]))]);
+  assertEq(r.etat, 'bifurcation'); assertEq(r.tetes, [N2a, N3]); assertEq(r.versionSuivante, 4);
+});
+
+test('B2-05 [5] Bifurcation puis fusion à deux parents : une seule tête', async () => {
+  const e = [await gentry(N1, rec(1, [])), await gentry(N2a, rec(2, [fid(N1)])), await gentry(N2b, rec(2, [fid(N1)]))];
+  const avant = NVCore.resolveGraph(e);
+  const fusion = NVCore.buildContent({ ipp: G_IPP, visite_id: G_VID, episode_id: G_EPI, auteur: 'RM', items: { a: 1 } }, avant, null);
+  assertEq(fusion.version, 3); assertEq(fusion.parents, [fid(N2b), fid(N2a)]);
+  const nomF = gname(3, 'RM', 30, 'dddddd');
+  const apres = NVCore.resolveGraph(e.concat([await gentry(nomF, fusion)]));
+  assertEq(apres.etat, 'normal'); assertEq(apres.courante, nomF); assertEq(apres.versionSuivante, 4);
+});
+
+test('B2-06 [6] Parent manquant : signalé, sans bloquer', async () => {
+  const absent = gname(2, 'XX', 5, 'eeeeee');
+  const r = NVCore.resolveGraph([await gentry(N1, rec(1, [])), await gentry(N3, rec(3, [fid(N1), fid(absent)]))]);
+  assertEq(r.etat, 'normal'); assertEq(r.courante, N3);
+  assertEq(r.parentsManquants, [{ nom: N3, parent: fid(absent) }]);
+});
+
+test('B2-07 [7] Fichier altéré : chaque zone → code attendu, jamais lisible', async () => {
+  const key = await gkey();
+  const ok = await NVCore.encryptVersion(rec(1, []), key, 1);
+  const cas = [[0, 'BAD_MAGIC'], [4, 'UNSUPPORTED_VERSION'], [5, 'AUTH_FAILED'], [6, 'AUTH_FAILED'],
+    [10, 'AUTH_FAILED'], [19, 'AUTH_FAILED'], [30, 'AUTH_FAILED'], [ok.length - 1, 'AUTH_FAILED']];
+  for (const [idx, code] of cas) assertCode(await gentry(N1, null, { bytes: flip(ok, idx) }), code);
+  assertCode(await gentry(N1, null, { bytes: ok.slice(0, ok.length - 10) }), 'AUTH_FAILED');
+  assertCode(await gentry(N1, null, { bytes: ok.slice(0, 20) }), 'TRUNCATED');
+  // un fichier altéré dans un dossier : ignoré pour la résolution, listé
+  const r = NVCore.resolveGraph([await gentry(N1, rec(1, [])), await gentry(N2a, null, { bytes: flip(ok, 30) })]);
+  assertEq(r.courante, N1); assertEq(r.illisibles[0].code, 'AUTH_FAILED');
+});
+
+test('B2-08 [8] Mauvaise clé → AUTH_FAILED', async () => {
+  const autre = await NVCore.generateDataKey();
+  assertCode(await gentry(N1, rec(1, []), { key: autre }), 'AUTH_FAILED');
+});
+
+test('B2-09 [9] Concordance chemin / nom / contenu : MISMATCH', async () => {
+  assertCode(await gentry(N1, rec(1, [], { ipp: '9900000001' })), 'MISMATCH');
+  assertCode(await gentry(N1, rec(1, [], { visite_id: 'autre-visite' })), 'MISMATCH');
+  assertCode(await gentry(N2a, rec(1, [])), 'MISMATCH');             // contenu v1 dans un fichier nommé v2
+  assertCode(await gentry('notes.txt', rec(1, [])), 'MISMATCH');
+  assert((await gentry(N1, rec(1, []))).obj, 'le cas conforme doit rester lisible');
+});
+
+test('B2-10 [10] Pierre tombale : motif obligatoire, restauration possible', async () => {
+  assertCode(await gentry(N2a, rec(2, [fid(N1)], { statut: 'annule' })), 'BAD_PAYLOAD');
+  assertCode(await gentry(N2a, rec(2, [fid(N1)], { statut: 'annule', motif: '   ' })), 'BAD_PAYLOAD');
+  const tomb = await gentry(N2a, rec(2, [fid(N1)], { statut: 'annule', motif: 'saisie sur le mauvais patient' }));
+  assert(tomb.obj, 'tombstone avec motif lisible');
+  const r1 = NVCore.resolveGraph([await gentry(N1, rec(1, [])), tomb]);
+  assertEq(r1.etat, 'normal'); assertEq(r1.courante, N2a);
+  // restauration = nouvelle version « actif » ; redirige_vers du précédent n'est pas recopié
+  const precedent = rec(2, [fid(N1)], { statut: 'annule', motif: 'x', redirige_vers: { ipp: '9900000002', visite_id: 'v-2' } });
+  const rest = NVCore.buildContent({ ipp: G_IPP, visite_id: G_VID, episode_id: G_EPI, auteur: 'RM' }, r1, precedent);
+  assertEq(rest.statut, 'actif'); assert(!('redirige_vers' in rest) && !('motif' in rest), 'champs d\'annulation non recopiés');
+});
+
+test('B2-11 [11] Schema inconnu ou absent', async () => {
+  assertCode(await gentry(N1, rec(1, [], { schema: 2 })), 'UNSUPPORTED_VERSION');
+  const sans = rec(1, []); delete sans.schema;
+  assertCode(await gentry(N1, sans), 'BAD_PAYLOAD');
+});
+
+test('B2-12 [12] Noms non conformes : ignorés, sans effet', async () => {
+  const e = [await gentry(N1, rec(1, [])), { nom: 'notes.txt' }, { nom: 'v1_RM.enc' }, { nom: 'Thumbs.db', code: 'X' }];
+  const r = NVCore.resolveGraph(e);
+  assertEq(r.ignores, ['Thumbs.db', 'notes.txt', 'v1_RM.enc']); assertEq(r.etat, 'normal'); assertEq(r.versionSuivante, 2);
+});
+
+test('B2-13 Même nom présent deux fois : un seul nœud', async () => {
+  const x = await gentry(N1, rec(1, []));
+  const r = NVCore.resolveGraph([x, x]);
+  assertEq(r.ordre, [N1]); assertEq(r.etat, 'normal');
+});
+
+test('B2-14 Validation structurelle : IPP, parents, champs facultatifs', async () => {
+  const v = o => { try { NVCore.validateContent(o); return null; } catch (e) { return e.code; } };
+  assertEq(v(rec(1, [])), null);
+  assertEq(v(rec(1, [], { ipp: '991234567' })), 'BAD_PAYLOAD');                       // 9 chiffres
+  assertEq(v(rec(1, [], { ipp: '99123456789' })), 'BAD_PAYLOAD');                      // 11 chiffres
+  assertEq(v(rec(1, [], { ipp: '99123A5678' })), 'BAD_PAYLOAD');
+  assertEq(v(rec(2, ['n-importe-quoi'])), 'BAD_PAYLOAD');
+  assertEq(v(rec(2, [fid(N2a)])), 'BAD_PAYLOAD');                                       // parent de même numéro
+  assertEq(v(rec(3, [fid(N1), fid(N1)])), 'BAD_PAYLOAD');                               // doublon
+  assertEq(v(rec(3, ['v0001_RM_20261399T250000Z_aaaaaa'])), 'BAD_PAYLOAD');           // date impossible : pas d'exception
+  assertEq(v(rec(1, [], { statut: 'autre' })), 'BAD_PAYLOAD');
+  assertEq(v(rec(1, [], { auteur: 'rm' })), 'BAD_PAYLOAD');
+  assertEq(v(rec(1, [], { date_saisie: 'hier' })), 'BAD_PAYLOAD');
+  assertEq(v(rec(1, [], { items: [] })), 'BAD_PAYLOAD');
+  assertEq(v(rec(1, [], { identite: { naissance: '1970-01-02', initiales: 'DM' } })), null);
+  assertEq(v(rec(1, [], { identite: { naissance: '02/01/1970', initiales: 'DM' } })), 'BAD_PAYLOAD');
+  assertEq(v(rec(1, [], { redirige_vers: { ipp: '1', visite_id: 'x' } })), 'BAD_PAYLOAD');
+  assertEq(v(rec(1, [], { origine: { ipp: '9900000002', visite_id: 'v-2', fid: fid(N1) } })), null);
+  assertEq(v([]), 'BAD_PAYLOAD'); assertEq(v(null), 'BAD_PAYLOAD');
+});
+
+test('B2-15 Champs inconnus recopiés à la réécriture, champs connus non', async () => {
+  const res = NVCore.resolveGraph([await gentry(N1, rec(1, []))]);
+  const prec = rec(1, [], { futur: { a: [1, 2] }, note_x: 'ok', items: { vieux: 1 }, redirige_vers: { ipp: '9900000002', visite_id: 'v-2' } });
+  const out = NVCore.buildContent({ ipp: G_IPP, visite_id: G_VID, episode_id: G_EPI, auteur: 'RM', items: { neuf: 2 } }, res, prec);
+  assertEq(out.futur, { a: [1, 2] }); assertEq(out.note_x, 'ok');
+  assertEq(out.items, { neuf: 2 }); assert(!('redirige_vers' in out), 'champ connu non recopié');
+  assertEq(out.version, 2); assertEq(out.parents, [fid(N1)]); assertEq(out.schema, 1);
+});
+
+test('B2-16 buildContent : refus des contenus invalides, redirection et origine acceptées', async () => {
+  const res = NVCore.resolveGraph([await gentry(N1, rec(1, []))]);
+  const base = { ipp: G_IPP, visite_id: G_VID, episode_id: G_EPI, auteur: 'RM' };
+  let code = null;
+  try { NVCore.buildContent(Object.assign({}, base, { statut: 'annule' }), res, null); } catch (e) { code = e.code; }
+  assertEq(code, 'BAD_INPUT');
+  code = null;
+  try { NVCore.buildContent(Object.assign({}, base, { ipp: '12' }), res, null); } catch (e) { code = e.code; }
+  assertEq(code, 'BAD_INPUT');
+  const t = NVCore.buildContent(Object.assign({}, base, { statut: 'annule', motif: 'erreur d\'IPP',
+    redirige_vers: { ipp: '9900000002', visite_id: 'v-2' } }), res, null);
+  assertEq(t.redirige_vers, { ipp: '9900000002', visite_id: 'v-2' });
+  const o = NVCore.buildContent(Object.assign({}, base, { ipp: '9900000002', visite_id: 'v-2',
+    origine: { ipp: G_IPP, visite_id: G_VID, fid: fid(N1) } }), NVCore.resolveGraph([]), null);
+  assertEq(o.version, 1); assertEq(o.parents, []);
+  // aller-retour complet : chiffrement, lecture, validation
+  const key = await gkey();
+  const lu = await NVCore.readEntry({ nom: gname(1, 'RM', 40, 'abcdef'), bytes: await NVCore.encryptVersion(o, key, 1), key, ipp: '9900000002', visite_id: 'v-2' });
+  assert(lu.obj && lu.obj.origine.fid === fid(N1), 'contenu de redirection relu');
+});
+
 // ===================== exécution et affichage =====================
 async function runAll() {
   const resultsEl = typeof document !== 'undefined' ? document.getElementById('results') : null;
