@@ -258,20 +258,16 @@
    0. CONFIGURATION  (c'est ici que tu adaptes à ton Supabase)
    ===================================================================== */
 const CONFIG = {
-  // Laisser SUPABASE_URL vide = mode test local (abréviation saisie à la main, aucune authentification).
-  SUPABASE_URL: '',          // ← À REMPLIR
-  SUPABASE_ANON_KEY: '',     // ← À REMPLIR
-
-  // Connexion : identifiant hospitalier -> email (RPC), puis email + mot de passe.
+  SUPABASE_URL: 'https://yseaujinbdwxpcelsywr.supabase.co', // ← Votre URL Supabase
+  SUPABASE_ANON_KEY: 'sb_publishable_7uC727-tO92zxGsAwCqBnA_E9oX_Xw8',           // ← Votre clé publique
   RPC_SCHEMA: 'commun',
   RPC_EMAIL_FROM_ID: 'get_email_from_hospital_id',
-  RPC_PARAM: 'p_hospital_id',          // ← À VÉRIFIER : nom exact du paramètre de la fonction
-
-  // Où lire l'abréviation du médecin une fois connecté.
+  RPC_PARAM: 'h_id',           // Aligné sur le nom de paramètre de vos autres scripts si besoin
   PROFILE_SCHEMA: 'commun',
-  PROFILE_TABLE: 'profiles',           // ← À VÉRIFIER (ou 'neurologues')
-  PROFILE_KEY_COLUMN: 'id',            // ← À VÉRIFIER : colonne égale à l'id de l'utilisateur authentifié
-  PROFILE_ABBR_COLUMN: 'abbreviation', // ← À VÉRIFIER : colonne contenant l'abréviation
+  PROFILE_TABLE: 'profiles',
+  PROFILE_KEY_COLUMN: 'id',
+  PROFILE_ABBR_COLUMN: 'initiales', // Pour harmoniser avec vos initiales de planning
+
 
   // Réservation d'un audio pendant sa transcription (évite que deux postes fassent le même travail).
   CLAIM_STALE_MS: 10 * 60 * 1000,      // une réservation sans signe de vie depuis ce délai est ignorée
@@ -424,20 +420,35 @@ let sb = null;
 const LOCAL_MODE = !CONFIG.SUPABASE_URL;
 
 async function initAuth() {
-  $('loginSupabase').hidden = LOCAL_MODE;
-  $('loginLocal').hidden = !LOCAL_MODE;
-  if (LOCAL_MODE) {
-    const a = sessionStorage.getItem('dictee.abbr');
-    if (a) { state.abbr = a; return enterApp(); }
-    return showView('viewLogin');
-  }
-  if (!window.supabase) { showView('viewLogin'); $('loginMsg').textContent = 'Bibliothèque Supabase inaccessible (réseau ?).'; $('loginMsg').className = 'status err'; return; }
-  sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const input = $('loginId').value.trim();
+  const pwd = $('loginPwd').value;
+  const msg = $('loginMsg');
+  msg.className = 'status'; 
+  msg.textContent = 'Connexion…';
+
   try {
-    const { data } = await sb.auth.getSession();
-    if (data && data.session) { state.user = data.session.user; state.abbr = cleanAbbr(await loadAbbr(state.user)); return enterApp(); }
-  } catch (e) { console.warn(e); }
-  showView('viewLogin');
+    let email = input;
+    // Si ce n'est pas un email, on passe par la RPC de lookup comme dans index (30).html
+    if (!input.includes('@')) {
+      const { data: foundEmail, error: lookupError } = await sb
+        .schema(CONFIG.RPC_SCHEMA)
+        .rpc(CONFIG.RPC_EMAIL_FROM_ID, { h_id: input });
+
+      if (lookupError || !foundEmail) throw new Error('Identifiant inconnu.');
+      email = foundEmail;
+    }
+
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
+    if (error) throw new Error('Identifiant ou mot de passe incorrect.');
+
+    state.user = data.user;
+    state.abbr = cleanAbbr(await loadAbbr(state.user));
+    msg.textContent = '';
+    await enterApp();
+  } catch (e) {
+    msg.textContent = e.message; 
+    msg.className = 'status err';
+  }
 }
 
 async function loadAbbr(user) {
