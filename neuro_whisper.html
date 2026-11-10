@@ -324,6 +324,9 @@ function postProcess(text) {
     prevEnd = off + a[0].length; prevRep = rep;
     return rep;
   });
+  
+  t = t.replace(/[\s,;:.]*(?<![\p{L}\d])[Pp]oint(?![\p{L}\d])[.!?]?(?=\s+\p{Lu}|\s*$)/gu, '.' + FIN + ' ');
+  
   for (const [pat, rep] of CORRECTIONS)
     t = t.replace(new RegExp(MOT(pat), 'giu'), rep);
   return t
