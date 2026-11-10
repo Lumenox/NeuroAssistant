@@ -752,7 +752,7 @@ self.onmessage = async (e) => {
       self.postMessage({ type: 'done', id: d.id });
     } else if (d.type === 'run') {
       const t0 = performance.now();
-      const opts = { task: 'transcribe', chunk_length_s: 30, stride_length_s: 5, return_timestamps: false };
+      const opts = { task: 'transcribe', chunk_length_s: 30, stride_length_s: 5, return_timestamps: true };
       if (d.language) opts.language = d.language;
       const out = await asr(d.audio, opts);
       self.postMessage({ type: 'done', id: d.id, text: out.text || '', seconds: (performance.now() - t0) / 1000 });
